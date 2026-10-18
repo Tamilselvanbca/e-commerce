@@ -15,6 +15,7 @@ export function startJobs() {
       logger.error({ err }, 'Order expiry job failed');
     }
   };
+  
   const cleanup = async () => {
     try {
       await purgeExpiredAuthData();
