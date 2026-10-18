@@ -7,7 +7,7 @@ import { formatPrice } from "@/lib/format";
 import type { Order, PaymentInit } from "@/lib/types";
 import { useCart, useToast } from "@/components/providers";
 import { Button, Modal, Spinner } from "@/components/ui";
-import { loadRazorpay } from "./load-razorpay";
+import { loadRazorpay, loadRazorpayLogo } from "./load-razorpay";
 
 type MockInit = Extract<PaymentInit, { gateway: "mock" }>;
 
@@ -66,7 +66,7 @@ export function usePaymentFlow(options: { onIncomplete?: (order: Order) => void 
   }
 
   async function openRazorpay(order: Order, payment: Extract<PaymentInit, { gateway: "razorpay" }>) {
-    const Razorpay = await loadRazorpay();
+    const [Razorpay, image] = await Promise.all([loadRazorpay(), loadRazorpayLogo()]);
     let handled = false;
     const rzp = new Razorpay({
       key: payment.keyId,
@@ -75,12 +75,21 @@ export function usePaymentFlow(options: { onIncomplete?: (order: Order) => void 
       currency: payment.currency,
       name: payment.name,
       description: payment.description,
+      image,
       prefill: {
         name: payment.prefill.name ?? undefined,
         email: payment.prefill.email ?? undefined,
         contact: payment.prefill.contact,
       },
-      theme: { color: "#18181b" },
+      theme: { color: "#c2410c" },
+      // Show UPI (QR on desktop, UPI apps on mobile, UPI ID) first; other methods follow.
+      config: {
+        display: {
+          blocks: { upi: { name: "Pay using UPI", instruments: [{ method: "upi" }] } },
+          sequence: ["block.upi"],
+          preferences: { show_default_blocks: true },
+        },
+      },
       handler: async (response) => {
         handled = true;
         setProcessing("Confirming your payment…");

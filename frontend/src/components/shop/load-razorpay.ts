@@ -26,8 +26,18 @@ export type RazorpayOptions = {
   currency: string;
   name: string;
   description?: string;
+  /** Logo shown in the checkout header: an https URL or a base64 data URL. */
+  image?: string;
   prefill?: { name?: string; email?: string; contact?: string };
   theme?: { color?: string };
+  /** Checkout display customisation (https://razorpay.com/docs/payments/payment-gateway/web-integration/standard/configure-payment-methods/). */
+  config?: {
+    display: {
+      blocks?: Record<string, { name: string; instruments: { method: string; flows?: string[]; apps?: string[] }[] }>;
+      sequence?: string[];
+      preferences?: { show_default_blocks?: boolean };
+    };
+  };
   handler: (response: RazorpaySuccessResponse) => void;
   modal?: { ondismiss?: () => void; escape?: boolean; confirm_close?: boolean };
 };
@@ -48,6 +58,31 @@ declare global {
 
 const SCRIPT_SRC = "https://checkout.razorpay.com/v1/checkout.js";
 let pending: Promise<RazorpayConstructor> | null = null;
+
+let logo: Promise<string | undefined> | null = null;
+
+/**
+ * The store logo as a data URL. Razorpay renders it inside its own https iframe,
+ * so a data URL works everywhere (including http://localhost in development).
+ */
+export function loadRazorpayLogo(): Promise<string | undefined> {
+  logo ??= fetch("/razorpay-logo.png")
+    .then((res) => (res.ok ? res.blob() : Promise.reject(new Error(`logo ${res.status}`))))
+    .then(
+      (blob) =>
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        }),
+    )
+    .catch(() => {
+      logo = null;
+      return undefined; // Checkout falls back to the store initial.
+    });
+  return logo;
+}
 
 export function loadRazorpay(): Promise<RazorpayConstructor> {
   if (typeof window === "undefined") return Promise.reject(new Error("Razorpay can only load in the browser"));
