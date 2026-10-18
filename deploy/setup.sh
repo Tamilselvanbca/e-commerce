@@ -4,7 +4,9 @@
 #   First run:
 #     sudo ADMIN_PHONES=9876543210 \
 #          TWILIO_ACCOUNT_SID=AC... TWILIO_AUTH_TOKEN=... TWILIO_VERIFY_SERVICE_SID=VA... \
+#          STORE_NAME="My Store" STORE_SUPPORT_EMAIL=... STORE_SUPPORT_PHONE=... WHATSAPP_NUMBER=91... \
 #          bash setup.sh example.com
+#   (the STORE_* / WHATSAPP_NUMBER values are optional starting values for Admin -> Settings)
 #
 #   Later (pull the latest code and rebuild):  sudo bash /opt/shop/deploy/setup.sh example.com
 #
@@ -94,6 +96,10 @@ TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
 TWILIO_VERIFY_SERVICE_SID=${TWILIO_VERIFY_SERVICE_SID:-}
 TWILIO_VERIFY_TEMPLATE_SID=${TWILIO_VERIFY_TEMPLATE_SID:-}
 EOF
+  # Optional starting values; Admin -> Settings overrides them later.
+  for name in STORE_NAME STORE_SUPPORT_EMAIL STORE_SUPPORT_PHONE WHATSAPP_NUMBER; do
+    if [ -n "${!name:-}" ]; then printf '%s=%s\n' "$name" "${!name}" >> backend/.env.production; fi
+  done
 fi
 umask 022
 
