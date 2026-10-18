@@ -4,6 +4,25 @@ This guide deploys the whole stack (PostgreSQL, API, Next.js, HTTPS reverse prox
 server with Docker Compose. A 2 vCPU / 4 GB RAM VM (AWS EC2 or Lightsail in `ap-south-1`, or any VPS)
 is enough for a typical store.
 
+## Quick start (one command)
+
+On a fresh Ubuntu 22.04 / 24.04 server (at least 2 GB RAM), as root:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/Tamilselvanbca/e-commerce/main/deploy/setup.sh
+ADMIN_PHONES=9876543210 \
+TWILIO_ACCOUNT_SID=AC... TWILIO_AUTH_TOKEN=... TWILIO_VERIFY_SERVICE_SID=VA... \
+bash setup.sh norukutheeni.in
+```
+
+`deploy/setup.sh` installs Docker, adds swap on small servers, opens ports 22/80/443, clones the code to
+`/opt/shop`, generates the database password, `OTP_SECRET` and `SETTINGS_ENCRYPTION_KEY`, builds and starts
+the stack, adds the starter catalogue to an empty database and schedules daily backups to
+`/var/backups/shop`. Point the domain's DNS at the server (below), log in with the `ADMIN_PHONES` number
+and finish the configuration in **Admin → Settings**. Run the same script again to update to the latest code.
+
+The sections below explain each step for a manual setup.
+
 ## 1. Prepare the server
 
 ```bash
