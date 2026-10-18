@@ -80,9 +80,15 @@ async function sendViaTwilio(phone, code) {
 
 const verifyUrl = (path) => `https://verify.twilio.com/v2/Services/${config.otp.twilio.verifyServiceSid}/${path}`;
 
-/** Twilio Verify: Twilio generates and sends the code; `code` is unused. */
+/**
+ * Twilio Verify: Twilio generates and sends the code; `code` is unused. The company
+ * name in the SMS is the Verify service's friendly name; the wording comes from
+ * TWILIO_VERIFY_TEMPLATE_SID (one of Twilio's pre-approved templates).
+ */
 async function sendViaTwilioVerify(phone) {
-  await twilioPost(verifyUrl('Verifications'), { To: phone, Channel: 'sms' });
+  const params = { To: phone, Channel: 'sms' };
+  if (config.otp.twilio.verifyTemplateSid) params.TemplateSid = config.otp.twilio.verifyTemplateSid;
+  await twilioPost(verifyUrl('Verifications'), params);
 }
 
 /**

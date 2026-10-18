@@ -63,6 +63,7 @@ const schema = z.object({
   TWILIO_FROM: optionalString,
   TWILIO_MESSAGING_SERVICE_SID: optionalString,
   TWILIO_VERIFY_SERVICE_SID: optionalString, // used by OTP_PROVIDER=twilio_verify
+  TWILIO_VERIFY_TEMPLATE_SID: optionalString, // Verify message template (HJ...); unset = service default
   ORDER_SMS_ENABLED: bool, // SMS the customer on order status changes (via Twilio)
 
   // Payments
@@ -174,6 +175,7 @@ function load() {
         from: env.TWILIO_FROM,
         messagingServiceSid: env.TWILIO_MESSAGING_SERVICE_SID,
         verifyServiceSid: env.TWILIO_VERIFY_SERVICE_SID,
+        verifyTemplateSid: env.TWILIO_VERIFY_TEMPLATE_SID,
       },
     },
 
