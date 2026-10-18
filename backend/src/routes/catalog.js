@@ -22,6 +22,7 @@ router.get('/config', (_req, res) => {
     internationalFreeShippingThreshold: config.store.internationalFreeShippingThreshold,
     supportEmail: config.store.supportEmail ?? null,
     supportPhone: config.store.supportPhone ?? null,
+    fssaiLicenseNo: config.store.fssaiLicenseNo ?? null,
     whatsappNumber: config.whatsapp.number ?? null,
     gateways: {
       razorpay: { enabled: gateways.includes('razorpay'), keyId: gateways.includes('razorpay') ? config.razorpay.keyId : null },

@@ -33,6 +33,7 @@ const schema = z.object({
   STORE_NAME: z.string().default('My Store'),
   STORE_SUPPORT_EMAIL: optionalString,
   STORE_SUPPORT_PHONE: optionalString,
+  FSSAI_LICENSE_NO: optionalString, // 14-digit FSSAI licence/registration number, shown in the footer
   CURRENCY: z.string().default('INR'),
   SHIPPING_FEE: z.coerce.number().int().min(0).default(4900),
   FREE_SHIPPING_THRESHOLD: z.coerce.number().int().min(0).default(99900),
@@ -48,7 +49,7 @@ const schema = z.object({
   COOKIE_SECURE: optionalString,
   COOKIE_DOMAIN: optionalString,
   OTP_SECRET: z.string().min(16, 'OTP_SECRET must be at least 16 characters'),
-  OTP_PROVIDER: z.enum(['console', 'msg91', 'twilio']).default('console'),
+  OTP_PROVIDER: z.enum(['console', 'msg91', 'twilio', 'twilio_verify']).default('console'),
   OTP_TTL_SECONDS: z.coerce.number().int().default(300),
   OTP_RESEND_SECONDS: z.coerce.number().int().default(60),
   OTP_MAX_ATTEMPTS: z.coerce.number().int().default(5),
@@ -61,6 +62,8 @@ const schema = z.object({
   TWILIO_AUTH_TOKEN: optionalString,
   TWILIO_FROM: optionalString,
   TWILIO_MESSAGING_SERVICE_SID: optionalString,
+  TWILIO_VERIFY_SERVICE_SID: optionalString, // used by OTP_PROVIDER=twilio_verify
+  ORDER_SMS_ENABLED: bool, // SMS the customer on order status changes (via Twilio)
 
   // Payments
   RAZORPAY_KEY_ID: optionalString,
@@ -117,7 +120,10 @@ function load() {
     throw new Error('OTP_EXPOSE_IN_RESPONSE must not be enabled in production');
   }
   if (isProd && env.OTP_PROVIDER === 'console') {
-    throw new Error('OTP_PROVIDER=console is not allowed in production; use msg91 or twilio');
+    throw new Error('OTP_PROVIDER=console is not allowed in production; use msg91, twilio or twilio_verify');
+  }
+  if (env.OTP_PROVIDER === 'twilio_verify' && !(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_VERIFY_SERVICE_SID)) {
+    throw new Error('OTP_PROVIDER=twilio_verify requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_VERIFY_SERVICE_SID');
   }
 
   return {
@@ -135,6 +141,7 @@ function load() {
       name: env.STORE_NAME,
       supportEmail: env.STORE_SUPPORT_EMAIL,
       supportPhone: env.STORE_SUPPORT_PHONE,
+      fssaiLicenseNo: env.FSSAI_LICENSE_NO,
       currency: env.CURRENCY,
       shippingFee: env.SHIPPING_FEE,
       freeShippingThreshold: env.FREE_SHIPPING_THRESHOLD,
@@ -166,7 +173,12 @@ function load() {
         authToken: env.TWILIO_AUTH_TOKEN,
         from: env.TWILIO_FROM,
         messagingServiceSid: env.TWILIO_MESSAGING_SERVICE_SID,
+        verifyServiceSid: env.TWILIO_VERIFY_SERVICE_SID,
       },
+    },
+
+    sms: {
+      orderUpdates: env.ORDER_SMS_ENABLED,
     },
 
     razorpay: {

@@ -11,6 +11,7 @@ import {
   orderShippedEmail,
   queueEmail,
 } from './email.js';
+import { queueOrderStatusSms } from './sms.js';
 
 export const ORDER_STATUSES = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
 
@@ -386,6 +387,7 @@ export async function markOrderPaid({ orderId, gateway, gatewayOrderId, gatewayP
   const order = await requireOrder({ id: orderId, admin: true });
   if (result.newlyPaid) {
     queueEmail(orderConfirmedEmail(order));
+    queueOrderStatusSms(order, 'confirmed');
     const adminMail = adminNewOrderEmail(order);
     if (adminMail) queueEmail(adminMail);
   }
@@ -477,6 +479,7 @@ export function notifyStatusChange(order, status, note) {
   if (status === 'shipped') queueEmail(orderShippedEmail(order));
   else if (status === 'delivered') queueEmail(orderDeliveredEmail(order));
   else if (status === 'cancelled') queueEmail(orderCancelledEmail(order, note));
+  queueOrderStatusSms(order, status);
 }
 
 /** Saves courier/AWB details and moves the order to "shipped". */

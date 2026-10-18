@@ -185,9 +185,12 @@ export function SiteFooter({ categories, year }: { categories: Category[]; year:
         </nav>
 
         <div className="mt-4 flex flex-col gap-3 text-xs text-brand-100 sm:flex-row sm:items-center sm:justify-between">
-          <p>
-            © {year} {config.storeName}. All rights reserved.
-          </p>
+          <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:gap-x-4">
+            <p>
+              © {year} {config.storeName}. All rights reserved.
+            </p>
+            {config.fssaiLicenseNo && <p>FSSAI Lic. No. {config.fssaiLicenseNo}</p>}
+          </div>
           <p>Secure payments: UPI, cards, net banking & wallets · International cards accepted</p>
         </div>
       </div>

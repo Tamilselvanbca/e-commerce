@@ -155,7 +155,7 @@ type PaymentInit =
   "storeName": "My Store", "currency": "INR",
   "shippingFee": 4900, "freeShippingThreshold": 99900,
   "internationalShippingFee": 199900, "internationalFreeShippingThreshold": 1499900,
-  "supportEmail": "help@example.com", "supportPhone": "+91 98765 43210",
+  "supportEmail": "help@example.com", "supportPhone": "+91 98765 43210", "fssaiLicenseNo": "12345678901234",
   "whatsappNumber": "919876543210",
   "gateways": {
     "razorpay": { "enabled": true, "keyId": "rzp_test_xxx" },

@@ -30,6 +30,8 @@ export type StoreConfig = {
   internationalFreeShippingThreshold: number;
   supportEmail: string | null;
   supportPhone: string | null;
+  /** FSSAI food licence number; hidden in the footer when null. */
+  fssaiLicenseNo: string | null;
   whatsappNumber: string | null;
   gateways: {
     razorpay: { enabled: boolean; keyId: string | null };

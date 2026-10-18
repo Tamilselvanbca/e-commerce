@@ -28,6 +28,7 @@ const FALLBACK_CONFIG: StoreConfig = {
   internationalFreeShippingThreshold: 0,
   supportEmail: null,
   supportPhone: null,
+  fssaiLicenseNo: null,
   whatsappNumber: null,
   gateways: { razorpay: { enabled: false, keyId: null }, stripe: { enabled: false }, mock: { enabled: false } },
 };

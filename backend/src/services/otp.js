@@ -3,9 +3,12 @@ import { config } from '../config.js';
 import { query, queryOne } from '../db/pool.js';
 import { AppError } from '../lib/errors.js';
 import { hmacSha256, safeEqual } from '../lib/util.js';
-import { sendOtpSms } from './sms.js';
+import { checkTwilioVerification, sendOtpSms } from './sms.js';
 
 const hashCode = (phone, code) => hmacSha256(config.otp.secret, `${phone}:${code}`);
+// With Twilio Verify the code lives at Twilio; otp_codes rows still enforce cooldown,
+// expiry and attempt limits, and store a random hash that never matches.
+const usesTwilioVerify = () => config.otp.provider === 'twilio_verify';
 
 /** Creates a new OTP for `phone` and sends it by SMS. Enforces a resend cooldown. */
 export async function requestOtp(phone, ip) {
@@ -28,7 +31,7 @@ export async function requestOtp(phone, ip) {
     throw new AppError(429, 'RATE_LIMITED', 'Too many codes requested for this number. Try again in an hour.', { retryAfter: 3600 });
   }
 
-  const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+  const code = usesTwilioVerify() ? crypto.randomBytes(16).toString('hex') : crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
   // Invalidate any earlier unused codes so only the newest one works.
   await query('UPDATE otp_codes SET consumed_at = now() WHERE phone = $1 AND consumed_at IS NULL', [phone]);
   const { id } = await queryOne(
@@ -48,7 +51,7 @@ export async function requestOtp(phone, ip) {
     phone,
     expiresIn: config.otp.ttlSeconds,
     resendIn: config.otp.resendSeconds,
-    ...(config.otp.exposeInResponse ? { devCode: code } : {}),
+    ...(config.otp.exposeInResponse && !usesTwilioVerify() ? { devCode: code } : {}),
   };
 }
 
@@ -70,7 +73,10 @@ export async function verifyOtp(phone, code) {
   if (!otp || otp.expired || otp.attempts >= config.otp.maxAttempts) {
     throw new AppError(400, 'OTP_EXPIRED', 'This code has expired. Please request a new one.');
   }
-  if (!safeEqual(otp.codeHash, hashCode(phone, code))) {
+  const valid = usesTwilioVerify()
+    ? await checkTwilioVerification(phone, code)
+    : safeEqual(otp.codeHash, hashCode(phone, code));
+  if (!valid) {
     const { attempts } = await queryOne(
       'UPDATE otp_codes SET attempts = attempts + 1 WHERE id = $1 RETURNING attempts',
       [otp.id],
