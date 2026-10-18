@@ -15,9 +15,13 @@ export function shiprocketEnabled() {
   return config.shipping.provider === 'shiprocket' && Boolean(email && password);
 }
 
+let tokenFor = null;
+
 async function getToken() {
-  if (token && Date.now() < tokenExpiresAt) return token;
   const { email, password } = config.shipping.shiprocket;
+  // A new login is needed when the credentials change in Admin → Settings.
+  const owner = `${email}:${password}`;
+  if (token && tokenFor === owner && Date.now() < tokenExpiresAt) return token;
   const res = await fetch(`${BASE}/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -30,6 +34,7 @@ async function getToken() {
     throw new AppError(502, 'GATEWAY_ERROR', 'Could not authenticate with Shiprocket. Check SHIPROCKET_EMAIL / SHIPROCKET_PASSWORD.');
   }
   token = data.token;
+  tokenFor = owner;
   tokenExpiresAt = Date.now() + 9 * 24 * 60 * 60 * 1000; // refresh a day early
   return token;
 }

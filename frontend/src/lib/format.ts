@@ -75,6 +75,7 @@ export const GATEWAY_LABELS = {
   razorpay: "Razorpay",
   stripe: "Stripe",
   mock: "Test payment",
+  gift_card: "Gift card",
 } as const;
 
 export function variantLabel(size: string | null, color: string | null): string {

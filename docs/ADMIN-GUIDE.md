@@ -69,6 +69,10 @@ shelf-stable items for international orders, and include any customs paperwork t
    doesn't move money.
 3. Back on the order, choose **Mark refunded** so your records match.
 
+Any amount paid with a **gift card** goes back on the card automatically when the order is cancelled, so
+you only refund the part paid online (shown as **Paid online** on the order). Orders paid entirely by gift
+card need no refund at all.
+
 ### Finding orders
 
 Use the status tabs, the payment filter, the date range, or search by order number, customer name or phone.
@@ -149,6 +153,63 @@ Under **Reviews** you can filter by status or rating and search by text, custome
 - **Delete**: removes the review permanently.
 - Please don't hide honest negative reviews; reply to the customer directly instead. Genuine mixed reviews
   build trust.
+
+## Discounts
+
+Under **Discounts → New discount** choose how customers get it:
+
+- **Discount code**: customers type the code (e.g. `DIWALI10`) at checkout. Codes aren't case sensitive.
+- **Automatic offer**: applies by itself when the cart qualifies, e.g. "₹100 off orders above ₹1,999".
+  Customers close to an offer see "Add ₹X more to get …" at checkout.
+
+Then set the value (a percentage with an optional cap, a fixed amount, or free shipping) and any
+conditions: minimum order, India-only or international-only, total uses, uses per customer, first order
+only, and start/end dates.
+
+- Only **one discount applies per order**. If a code and an automatic offer both qualify, the customer
+  gets whichever saves more, and checkout explains why.
+- A discount counts as used once an order with it is placed. If that order is cancelled or never paid,
+  the use is given back.
+- Use the switch in the list to pause a discount. A discount that has been used can't be deleted (it's
+  part of the order history), but it can be switched off.
+
+## Gift cards
+
+**Gift cards → Issue gift card**: pick an amount, the recipient's name and email, an optional "From" name,
+message and expiry date (one year by default). With **Send by email** ticked, the recipient gets a branded
+email with the 16-character code, such as `K7QM-2XPA-9RTW-4HNE`.
+
+- Customers enter the code at checkout under **Gift card**. It can pay for part of an order (the rest is
+  paid online) or all of it, and works together with a discount code. Unused balance stays on the card.
+- Anyone can check a balance on the store's **Gift cards** page (linked in the footer).
+- On a card's page you can **Copy code**, **Email again**, **Adjust balance** (add or remove, with a
+  reason), edit the recipient or expiry, or **Disable** it. The **History** lists every use with its order.
+- The header of the list shows the total unspent balance across active cards.
+
+**Selling gift cards online:** customers buy them on the **Gift cards** page (₹100 to ₹50,000, paid with
+Razorpay or Stripe). Once paid, the card is created and emailed to the recipient automatically, valid for a
+year, and the order appears under **Orders** as already delivered, with a link to the card. To refund one,
+disable the card first, then refund the payment in the Razorpay/Stripe dashboard.
+
+For corporate or bulk gifting, take the order on WhatsApp or the enquiry form, collect payment, then issue
+the cards here.
+
+## Settings
+
+**Settings** holds the store's configuration: store details and FSSAI number, delivery charges and
+Shiprocket, the login OTP sender (Twilio Verify, Twilio SMS or MSG91) and order SMS, Razorpay and Stripe
+keys, email (SMTP) and new-order alerts, image storage, and WhatsApp.
+
+- Each section has its own **Save changes** button. Changes apply to the live store immediately.
+- Each setting shows where its value comes from: **Saved here**, **From .env** (the server file) or
+  **Default**. **Use .env value** removes the saved value.
+- Keys and passwords (secrets) are stored encrypted and never shown again; you only see the last four
+  characters. Use **Replace** to enter a new one or **Remove** to clear it.
+- **Login OTP & SMS → Choose from my Twilio templates** lists your Twilio Verify message templates so you
+  can pick the wording of the login SMS.
+- **Email → Send a test email** checks the saved SMTP settings.
+- Double-check before saving the OTP or Twilio settings: if they're wrong, nobody (including you) can
+  receive a login code. If that happens, your developer can fix the value on the server.
 
 ## Good habits
 

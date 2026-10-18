@@ -149,6 +149,10 @@ export function usePaymentFlow(options: { onIncomplete?: (order: Order) => void 
       case "razorpay":
         await openRazorpay(order, payment);
         return;
+      case "gift_card":
+        // Already paid in full by the gift card.
+        await succeeded(order);
+        return;
     }
   }
 

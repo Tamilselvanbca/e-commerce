@@ -14,11 +14,14 @@ import {
   IconClose,
   IconDashboard,
   IconExternal,
+  IconGift,
   IconLogout,
   IconMenu,
   IconOrders,
   IconProducts,
+  IconSettings,
   IconStar,
+  IconTag,
   IconUsers,
 } from "./icons";
 
@@ -30,6 +33,9 @@ const NAV = [
   { href: "/admin/users", label: "Customers", icon: IconUsers },
   { href: "/admin/enquiries", label: "Bulk enquiries", icon: IconChat },
   { href: "/admin/reviews", label: "Reviews", icon: IconStar },
+  { href: "/admin/discounts", label: "Discounts", icon: IconTag },
+  { href: "/admin/gift-cards", label: "Gift cards", icon: IconGift },
+  { href: "/admin/settings", label: "Settings", icon: IconSettings },
 ] as const;
 
 function isActive(pathname: string, href: string, exact?: boolean) {

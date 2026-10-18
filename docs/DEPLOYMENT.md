@@ -4,6 +4,25 @@ This guide deploys the whole stack (PostgreSQL, API, Next.js, HTTPS reverse prox
 server with Docker Compose. A 2 vCPU / 4 GB RAM VM (AWS EC2 or Lightsail in `ap-south-1`, or any VPS)
 is enough for a typical store.
 
+## Quick start (one command)
+
+On a fresh Ubuntu 22.04 / 24.04 server (at least 2 GB RAM), as root:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/Tamilselvanbca/e-commerce/main/deploy/setup.sh
+ADMIN_PHONES=9876543210 \
+TWILIO_ACCOUNT_SID=AC... TWILIO_AUTH_TOKEN=... TWILIO_VERIFY_SERVICE_SID=VA... \
+bash setup.sh norukutheeni.in
+```
+
+`deploy/setup.sh` installs Docker, adds swap on small servers, opens ports 22/80/443, clones the code to
+`/opt/shop`, generates the database password, `OTP_SECRET` and `SETTINGS_ENCRYPTION_KEY`, builds and starts
+the stack, adds the starter catalogue to an empty database and schedules daily backups to
+`/var/backups/shop`. Point the domain's DNS at the server (below), log in with the `ADMIN_PHONES` number
+and finish the configuration in **Admin → Settings**. Run the same script again to update to the latest code.
+
+The sections below explain each step for a manual setup.
+
 ## 1. Prepare the server
 
 ```bash
@@ -14,6 +33,12 @@ git clone <your-repo-url> shop && cd shop
 ```
 
 Point DNS at the server: an `A` record for `example.com` and one for `www.example.com`. Open ports 80 and 443.
+
+**Domain at GoDaddy:** *Domains → your domain → DNS → Records*. Edit the `A` record named `@` to the server's
+IP (replacing "Parked" or a Website Builder address), add or edit a `CNAME` named `www` with value `@`, and
+turn off any *Forwarding*. Changes usually apply within an hour. Check with `nslookup example.com`.
+GoDaddy's Websites + Marketing and shared cPanel hosting can't run this app; use a VPS (GoDaddy VPS or any
+other provider) and keep the domain at GoDaddy.
 
 ## 2. Configure
 
@@ -36,18 +61,25 @@ Required production values in `backend/.env.production`:
 | --- | --- |
 | `NODE_ENV` | `production` |
 | `OTP_SECRET` | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `OTP_PROVIDER` | `msg91` or `twilio` (`console` is refused in production) |
+| `SETTINGS_ENCRYPTION_KEY` | another random string like the above; encrypts secrets saved in Admin → Settings. Back it up: if it changes, those secrets must be re-entered |
+| `OTP_PROVIDER` + its keys | `twilio_verify` (with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID`), `twilio` or `msg91`; `console` is refused in production. Needed in `.env` for the first login (see below) |
 | `OTP_EXPOSE_IN_RESPONSE` | `false` |
 | `ENABLE_MOCK_PAYMENTS` | `false` (ignored in production anyway) |
 | `ADMIN_PHONES` | the owner's mobile number(s) |
-| `STORE_*`, `SHIPPING_FEE`, `FREE_SHIPPING_THRESHOLD` | store details and domestic shipping (amounts in paise) |
-| `INTERNATIONAL_SHIPPING_FEE`, `INTERNATIONAL_FREE_SHIPPING_THRESHOLD` | shipping for addresses outside India (paise; threshold `0` = never free) |
-| `RAZORPAY_*`, `STRIPE_*` | live keys and webhook secrets (section 4) |
-| `SMTP_*`, `EMAIL_FROM`, `ADMIN_NOTIFY_EMAIL` | email (section 5) |
-| `STORAGE_DRIVER=s3`, `AWS_*`, `S3_PUBLIC_URL` | image storage (section 6) |
-| `WHATSAPP_NUMBER` | business WhatsApp number, digits with country code |
 
 `DATABASE_URL` and `FRONTEND_URL` are set by the compose file. Leave `TRUST_PROXY` at its default.
+
+**Everything else is managed in Admin → Settings** after the first login: store details, delivery charges,
+order SMS, Razorpay/Stripe keys, SMTP email, image storage, Shiprocket and WhatsApp. Values saved there
+override `.env` (secrets are stored AES-256-GCM encrypted), apply immediately and survive restarts and
+redeploys. The variables in `backend/.env.example` still work as fallbacks if you prefer files.
+
+To move values that are already in `.env.production` into the admin panel:
+```bash
+docker compose -f docker-compose.prod.yml exec backend npm run settings:import   # add -- --overwrite to replace saved values
+```
+then delete those lines from `.env.production` and restart the backend. Keep the OTP settings in `.env`
+until the import has run, so you can always log in.
 
 ## 3. Start
 
@@ -69,6 +101,9 @@ categories and products.
 **Updating:** `git pull && docker compose -f docker-compose.prod.yml up -d --build`.
 
 ## 4. Payment gateways
+
+Sections 4–9 name the environment variables; each one is also a field in **Admin → Settings** (the
+webhook URLs to register are shown there too).
 
 All prices are charged in INR on both gateways.
 
@@ -129,6 +164,11 @@ Create an OTP template containing `##OTP##`, then set `MSG91_AUTH_KEY` and `MSG9
 **Twilio** (`OTP_PROVIDER=twilio`): set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and either `TWILIO_FROM`
 or `TWILIO_MESSAGING_SERVICE_SID`. Indian destinations still need DLT-registered templates.
 
+**Twilio Verify** (`OTP_PROVIDER=twilio_verify`): Twilio generates, sends and checks the code. Set
+`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_VERIFY_SERVICE_SID` (`VA…`); the company name in the SMS is
+the Verify service's friendly name. Optionally pick a message template (`TWILIO_VERIFY_TEMPLATE_SID`, `HJ…`):
+**Admin → Settings → Login OTP & SMS → Choose from my Twilio templates** lists them.
+
 The app generates and verifies codes itself (6 digits, 5 min expiry, 5 attempts, 60 s resend cooldown,
 6 codes per number per hour), so switching provider changes only delivery.
 
@@ -171,7 +211,8 @@ With `SHIPPING_PROVIDER=manual`, admins enter courier and AWB by hand.
 
 ## Go-live checklist
 
-- [ ] `NODE_ENV=production`, strong `OTP_SECRET` and `POSTGRES_PASSWORD`
+- [ ] `NODE_ENV=production`, strong `OTP_SECRET`, `SETTINGS_ENCRYPTION_KEY` and `POSTGRES_PASSWORD` (kept somewhere safe)
+- [ ] Admin → Settings reviewed section by section; test email received
 - [ ] SMS provider live (DLT approved) and a test login works on a real phone
 - [ ] Razorpay live keys + webhook; one real low-value payment made and refunded
 - [ ] Stripe live keys + webhook (if used); one real payment made and refunded

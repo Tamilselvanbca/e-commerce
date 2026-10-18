@@ -3,17 +3,30 @@
 // Without SMTP_HOST, messages are logged instead of sent.
 import nodemailer from 'nodemailer';
 import { config } from '../config.js';
+import { AppError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
 import { formatMoney } from '../lib/util.js';
 
-const transport = config.email.smtp
-  ? nodemailer.createTransport(config.email.smtp)
-  : nodemailer.createTransport({ jsonTransport: true });
+// Rebuilt whenever the SMTP settings change (Admin → Settings → Email).
+let transport = null;
+let transportFor = null;
+
+function getTransport() {
+  const key = JSON.stringify(config.email.smtp);
+  if (key !== transportFor) {
+    transport?.close?.();
+    transport = config.email.smtp
+      ? nodemailer.createTransport(config.email.smtp)
+      : nodemailer.createTransport({ jsonTransport: true });
+    transportFor = key;
+  }
+  return transport;
+}
 
 export async function sendEmail({ to, subject, html, text }) {
   if (!to) return;
   try {
-    const info = await transport.sendMail({ from: config.email.from, to, subject, html, text });
+    const info = await getTransport().sendMail({ from: config.email.from, to, subject, html, text });
     if (!config.email.smtp) logger.info({ to, subject }, '[email] SMTP not configured; message logged only');
     else logger.info({ to, subject, messageId: info.messageId }, '[email] sent');
   } catch (err) {
@@ -25,6 +38,28 @@ export async function sendEmail({ to, subject, html, text }) {
 /** Fire-and-forget wrapper used from request handlers. */
 export function queueEmail(message) {
   setImmediate(() => void sendEmail(message));
+}
+
+/**
+ * Sends a test message with the current settings. Unlike sendEmail it reports
+ * failures, so the admin can see why mail isn't going out.
+ */
+export async function sendTestEmail(to) {
+  if (!config.email.smtp) {
+    throw new AppError(400, 'EMAIL_NOT_CONFIGURED', 'No SMTP server is set, so emails are only written to the server log.');
+  }
+  try {
+    await getTransport().sendMail({
+      from: config.email.from,
+      to,
+      subject: `Test email from ${config.store.name}`,
+      html: layout('Your email settings work', '<p style="font-size:14px">Order confirmations and alerts will be sent from this address.</p>'),
+      text: 'Your email settings work. Order confirmations and alerts will be sent from this address.',
+    });
+  } catch (err) {
+    logger.warn({ err, to }, '[email] test email failed');
+    throw new AppError(502, 'EMAIL_FAILED', `The email server rejected the message: ${err.message}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -39,7 +74,7 @@ function layout(title, bodyHtml) {
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:24px 0">
     <tr><td align="center">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden">
-        <tr><td style="background:#18181b;color:#ffffff;padding:20px 24px;font-size:20px;font-weight:bold">${store}</td></tr>
+        <tr><td style="background:#c2410c;color:#ffffff;padding:20px 24px;font-size:20px;font-weight:bold">${store}</td></tr>
         <tr><td style="padding:24px">
           <h1 style="font-size:20px;margin:0 0 16px">${esc(title)}</h1>
           ${bodyHtml}
@@ -70,10 +105,38 @@ function itemsTable(order) {
     <tr><th align="left" style="padding-bottom:8px">Item</th><th style="padding-bottom:8px">Qty</th><th align="right" style="padding-bottom:8px">Total</th></tr>
     ${rows}
     ${line('Subtotal', formatMoney(order.subtotal, order.currency))}
-    ${line('Shipping', order.shippingFee ? formatMoney(order.shippingFee, order.currency) : 'Free')}
-    ${order.discount ? line('Discount', `-${formatMoney(order.discount, order.currency)}`) : ''}
+    ${order.kind === 'gift_card' ? '' : line('Shipping', order.shippingFee ? formatMoney(order.shippingFee, order.currency) : 'Free')}
+    ${order.discount ? line(`Discount${order.discountCode ? ` (${esc(order.discountCode)})` : order.discountTitle ? ` (${esc(order.discountTitle)})` : ''}`, `-${formatMoney(order.discount, order.currency)}`) : ''}
     ${line('Total', formatMoney(order.total, order.currency), true)}
+    ${order.giftCardAmount ? line('Paid by gift card', `-${formatMoney(order.giftCardAmount, order.currency)}`) : ''}
+    ${order.giftCardAmount ? line('Paid online', formatMoney(order.amountDue, order.currency), true) : ''}
   </table>`;
+}
+
+export function giftCardEmail(card) {
+  if (!card.recipientEmail) return null;
+  const amount = formatMoney(card.balance, card.currency);
+  const from = card.senderName ? `${esc(card.senderName)} sent you` : 'You have received';
+  const expiry = card.expiresAt
+    ? `<p style="font-size:13px;color:#71717a">Valid until ${esc(new Date(card.expiresAt).toLocaleDateString('en-IN', { dateStyle: 'long', timeZone: config.store.timezone }))}.</p>`
+    : '';
+  return {
+    to: card.recipientEmail,
+    subject: `${card.senderName ? `${card.senderName} sent you` : 'Your'} ${amount} ${config.store.name} gift card`,
+    html: layout(`A ${amount} gift card for you`, `
+      <p style="font-size:14px">${card.recipientName ? `Hi ${esc(card.recipientName)}, ` : ''}${from} a gift card for ${esc(config.store.name)}.</p>
+      ${card.message ? `<p style="font-size:14px;white-space:pre-wrap;border-left:3px solid #ea580c;padding-left:12px;color:#3f3f46">${esc(card.message)}</p>` : ''}
+      <div style="margin:20px 0;padding:20px;border-radius:8px;background:#fff7ed;border:1px dashed #ea580c;text-align:center">
+        <div style="font-size:13px;color:#9a3412">Gift card code</div>
+        <div style="font-size:22px;font-weight:bold;letter-spacing:2px;font-family:monospace;color:#18181b;margin-top:6px">${esc(card.code)}</div>
+        <div style="font-size:14px;margin-top:6px">Balance: <strong>${amount}</strong></div>
+      </div>
+      <p style="font-size:14px">Enter the code at checkout to pay for your order. Any balance left stays on the card for next time.</p>
+      ${expiry}
+      <p style="margin:24px 0"><a href="${config.frontendUrl}/products"
+         style="background:#c2410c;color:#ffffff;padding:12px 20px;border-radius:6px;text-decoration:none;font-size:14px">Start shopping</a></p>`),
+    text: `${card.senderName ? `${card.senderName} sent you` : 'You have received'} a ${amount} ${config.store.name} gift card. Code: ${card.code}. Use it at checkout on ${config.frontendUrl}.`,
+  };
 }
 
 function addressBlock(a) {
@@ -83,9 +146,36 @@ function addressBlock(a) {
 
 const orderLink = (order) =>
   `<p style="margin:24px 0"><a href="${config.frontendUrl}/account/orders/${encodeURIComponent(order.orderNumber)}"
-     style="background:#18181b;color:#ffffff;padding:12px 20px;border-radius:6px;text-decoration:none;font-size:14px">View your order</a></p>`;
+     style="background:#c2410c;color:#ffffff;padding:12px 20px;border-radius:6px;text-decoration:none;font-size:14px">View your order</a></p>`;
+
+/** "Asha (asha@example.com)" for each gift card in a purchase. */
+const giftCardRecipients = (order) =>
+  order.items
+    .filter((i) => i.giftCard)
+    .map((i) => `${i.giftCard.recipientName}${i.giftCard.recipientEmail ? ` (${i.giftCard.recipientEmail})` : ''}`);
+
+/** Delivery details for an order: the address, or who the gift card was emailed to. */
+function deliveryBlock(order) {
+  if (order.shippingAddress) return addressBlock(order.shippingAddress);
+  const to = giftCardRecipients(order).map(esc).join('<br>');
+  return `<p style="font-size:14px;line-height:1.5;margin:0">Gift card sent by email to:<br>${to}</p>`;
+}
 
 export function orderConfirmedEmail(order) {
+  if (order.kind === 'gift_card') {
+    const to = giftCardRecipients(order);
+    return {
+      to: order.email,
+      subject: `Your ${config.store.name} gift card is on its way`,
+      html: layout('Thank you for your gift card order!', `
+        <p style="font-size:14px">We've received your payment for order <strong>${esc(order.orderNumber)}</strong>
+        and emailed the gift card to <strong>${to.map(esc).join(', ')}</strong>.</p>
+        ${itemsTable(order)}
+        <p style="font-size:13px;color:#71717a">If it doesn't arrive, ask them to check their spam folder or reply to this email and we'll resend it.</p>
+        ${orderLink(order)}`),
+      text: `Thank you! Your gift card (order ${order.orderNumber}, ${formatMoney(order.total, order.currency)}) was emailed to ${to.join(', ')}.`,
+    };
+  }
   return {
     to: order.email,
     subject: `Order confirmed: ${order.orderNumber}`,
@@ -95,7 +185,7 @@ export function orderConfirmedEmail(order) {
       <h2 style="font-size:16px;margin:16px 0 8px">Shipping to</h2>
       ${addressBlock(order.shippingAddress)}
       ${orderLink(order)}`),
-    text: `Thank you! Order ${order.orderNumber} is confirmed. Total ${formatMoney(order.total, order.currency)}. Track it at ${config.frontendUrl}/account/orders/${order.orderNumber}`,
+    text: `Thank you! Order ${order.orderNumber} is confirmed. Total ${formatMoney(order.total, order.currency)}${order.giftCardAmount ? ` (${formatMoney(order.giftCardAmount, order.currency)} paid by gift card)` : ''}. Track it at ${config.frontendUrl}/account/orders/${order.orderNumber}`,
   };
 }
 
@@ -144,9 +234,9 @@ export function adminNewOrderEmail(order) {
   return {
     to: config.email.adminNotify,
     subject: `New order ${order.orderNumber}: ${formatMoney(order.total, order.currency)}`,
-    html: layout(`New paid order ${order.orderNumber}`, `
+    html: layout(`New paid ${order.kind === 'gift_card' ? 'gift card order' : 'order'} ${order.orderNumber}`, `
       ${itemsTable(order)}
-      ${addressBlock(order.shippingAddress)}
+      ${deliveryBlock(order)}
       <p style="margin:24px 0"><a href="${config.frontendUrl}/admin/orders/${encodeURIComponent(order.orderNumber)}">Open in admin</a></p>`),
     text: `New order ${order.orderNumber}, total ${formatMoney(order.total, order.currency)}`,
   };

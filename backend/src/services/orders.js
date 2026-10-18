@@ -2,15 +2,28 @@ import { config } from '../config.js';
 import { pool, query, queryOne, transaction } from '../db/pool.js';
 import { AppError, badRequest, conflict, notFound } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
-import { generateOrderNumber } from '../lib/util.js';
+import { formatMoney, generateOrderNumber } from '../lib/util.js';
+import { lockDiscount, resolveDiscount } from './discounts.js';
 import {
   adminNewOrderEmail,
+  giftCardEmail,
   orderCancelledEmail,
   orderConfirmedEmail,
   orderDeliveredEmail,
   orderShippedEmail,
   queueEmail,
 } from './email.js';
+import {
+  findUsableGiftCard,
+  formatGiftCardCode,
+  giftCardForEmail,
+  giftCardPortion,
+  issuePurchasedGiftCards,
+  maskGiftCardCode,
+  reclaimGiftCardForOrder,
+  redeemGiftCard,
+  refundGiftCardForOrder,
+} from './gift-cards.js';
 import { queueOrderStatusSms } from './sms.js';
 
 export const ORDER_STATUSES = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
@@ -42,6 +55,26 @@ export function computeTotals(subtotal, country = DOMESTIC_COUNTRY) {
   return { subtotal, shippingFee: shipping, discount: 0, total: subtotal + shipping };
 }
 
+/**
+ * Prices a cart: shipping, the best discount (a typed code or an automatic
+ * offer) and an optional gift card. Read-only; checkout re-checks with locks.
+ */
+export async function priceOrder({ subtotal, country = DOMESTIC_COUNTRY, userId, couponCode, giftCardCode }, db = pool) {
+  const { shippingFee } = computeTotals(subtotal, country);
+  const ctx = { code: couponCode, subtotal, shippingFee, international: country !== DOMESTIC_COUNTRY, userId };
+  const { applied, code, hint } = subtotal > 0 ? await resolveDiscount(ctx, db) : { applied: null, code: null, hint: null };
+  const discount = applied?.amount ?? 0;
+  const total = subtotal + shippingFee - discount;
+
+  let giftCard = null;
+  if (giftCardCode) {
+    const found = await findUsableGiftCard(giftCardCode, { db });
+    giftCard = found.card ? { card: found.card, amount: giftCardPortion(found.card.balance, total) } : { error: found.error, code: found.code };
+  }
+  const giftCardAmount = giftCard?.amount ?? 0;
+  return { subtotal, shippingFee, discount, total, giftCardAmount, amountDue: total - giftCardAmount, applied, code, hint, giftCard };
+}
+
 // ---------------------------------------------------------------------------
 // Reading
 // ---------------------------------------------------------------------------
@@ -49,12 +82,13 @@ const ITEM_AGGREGATES = `
   (SELECT coalesce(sum(quantity), 0) FROM order_items WHERE order_id = o.id) AS item_count,
   (SELECT image_url FROM order_items WHERE order_id = o.id AND image_url IS NOT NULL LIMIT 1) AS preview_image`;
 const SUMMARY_COLUMNS = `
-  o.id, o.order_number, o.status, o.payment_status, o.payment_gateway, o.total, o.created_at, ${ITEM_AGGREGATES}`;
+  o.id, o.order_number, o.kind, o.status, o.payment_status, o.payment_gateway, o.total, o.created_at, ${ITEM_AGGREGATES}`;
 
 function toSummary(r, withCustomer = false) {
   return {
     id: r.id,
     orderNumber: r.orderNumber,
+    kind: r.kind,
     status: r.status,
     paymentStatus: r.paymentStatus,
     paymentGateway: r.paymentGateway,
@@ -111,13 +145,21 @@ export async function getOrder({ orderNumber, id, userId, admin = false }, db = 
     params.push(userId);
     where += ' AND o.user_id = $2';
   }
-  const o = await queryOne(`SELECT o.*, ${ITEM_AGGREGATES} FROM orders o WHERE ${where}`, params, db);
+  const o = await queryOne(
+    `SELECT o.*, ${ITEM_AGGREGATES}, (SELECT code FROM gift_cards g WHERE g.id = o.gift_card_id) AS gift_card_code
+       FROM orders o WHERE ${where}`,
+    params,
+    db,
+  );
   if (!o) return null;
 
-  const [items, history, shipment] = await Promise.all([
+  const [rawItems, history, shipment] = await Promise.all([
     query(
-      `SELECT id, product_id, product_name, product_slug, sku, size, color, image_url, unit_price, quantity, line_total
-         FROM order_items WHERE order_id = $1 ORDER BY product_name, size`,
+      `SELECT oi.id, oi.product_id, oi.product_name, oi.product_slug, oi.sku, oi.size, oi.color, oi.image_url,
+              oi.unit_price, oi.quantity, oi.line_total, oi.gift_card_details,
+              g.id AS issued_card_id, g.code AS issued_card_code
+         FROM order_items oi LEFT JOIN gift_cards g ON g.order_item_id = oi.id
+        WHERE oi.order_id = $1 ORDER BY oi.product_name, oi.size`,
       [o.id],
       db,
     ),
@@ -129,6 +171,18 @@ export async function getOrder({ orderNumber, id, userId, admin = false }, db = 
     ),
   ]);
 
+  // Gift card lines carry the recipient and, once paid, the card that was issued.
+  const items = rawItems.map(({ giftCardDetails, issuedCardId, issuedCardCode, ...item }) => ({
+    ...item,
+    giftCard: giftCardDetails
+      ? {
+          ...giftCardDetails,
+          code: issuedCardCode ? (admin ? formatGiftCardCode(issuedCardCode) : maskGiftCardCode(issuedCardCode)) : null,
+          ...(admin ? { id: issuedCardId } : {}),
+        }
+      : null,
+  }));
+
   const unpaid = o.paymentStatus !== 'paid' && o.paymentStatus !== 'refunded';
   const order = {
     ...toSummary(o),
@@ -136,6 +190,13 @@ export async function getOrder({ orderNumber, id, userId, admin = false }, db = 
     subtotal: o.subtotal,
     shippingFee: o.shippingFee,
     discount: o.discount,
+    discountCode: o.discountCode,
+    discountTitle: o.discountTitle,
+    giftCardAmount: o.giftCardAmount,
+    amountDue: o.amountDue,
+    giftCard: o.giftCardCode
+      ? { code: admin ? formatGiftCardCode(o.giftCardCode) : maskGiftCardCode(o.giftCardCode), ...(admin ? { id: o.giftCardId } : {}) }
+      : null,
     email: o.email,
     phone: o.phone,
     notes: o.notes,
@@ -198,6 +259,7 @@ async function releaseStock(orderId, db) {
  */
 async function cancelLocked(order, { reason, by = null, db }) {
   await releaseStock(order.id, db);
+  const returned = await refundGiftCardForOrder(db, order.id, `Order cancelled: ${reason}`);
   await query(
     `UPDATE orders SET status = 'cancelled', cancelled_at = now(),
             payment_status = CASE WHEN payment_status = 'pending' THEN 'failed' ELSE payment_status END
@@ -205,19 +267,22 @@ async function cancelLocked(order, { reason, by = null, db }) {
     [order.id],
     db,
   );
-  await addHistory(order.id, 'cancelled', reason, by, db);
+  const note = returned ? `${reason}. ${formatMoney(returned)} was returned to the gift card.` : reason;
+  await addHistory(order.id, 'cancelled', note, by, db);
 }
 
 /**
  * Creates an order from the user's cart, reserving stock atomically.
  * Earlier unpaid orders of the same user are cancelled first so their stock
- * is not held twice.
+ * (and gift card balance) is not held twice. The discount and gift card are
+ * re-checked with their rows locked; problems throw COUPON_INVALID or
+ * GIFT_CARD_INVALID so the customer is never charged a different amount.
  */
-export async function createOrderFromCart({ user, cartId, address, email, notes, gateway }) {
+export async function createOrderFromCart({ user, cartId, address, email, notes, gateway, couponCode, giftCardCode }) {
   const orderId = await transaction(async (db) => {
-    // Release stock held by the user's previous unpaid orders.
+    // Release stock held by the user's previous unpaid orders (gift card purchases hold none).
     const stale = await query(
-      `SELECT id FROM orders WHERE user_id = $1 AND status = 'pending' AND payment_status <> 'paid' FOR UPDATE`,
+      `SELECT id FROM orders WHERE user_id = $1 AND kind = 'goods' AND status = 'pending' AND payment_status <> 'paid' FOR UPDATE`,
       [user.id],
       db,
     );
@@ -263,7 +328,24 @@ export async function createOrderFromCart({ user, cartId, address, email, notes,
     }
 
     const subtotal = lines.reduce((n, l) => n + l.price * l.quantity, 0);
-    const totals = computeTotals(subtotal, address.country);
+    const { shippingFee } = computeTotals(subtotal, address.country);
+
+    const ctx = { code: couponCode, subtotal, shippingFee, international: address.country !== DOMESTIC_COUNTRY, userId: user.id };
+    const { applied, code } = await resolveDiscount(ctx, db);
+    if (code && !code.applied && !code.outranked) throw conflict('COUPON_INVALID', code.message, { code: code.code });
+    const discount = applied ? await lockDiscount(applied.discount.id, ctx, db) : null;
+    const discountAmount = applied?.amount ?? 0;
+    const total = subtotal + shippingFee - discountAmount;
+
+    let giftCard = null;
+    let giftCardAmount = 0;
+    if (giftCardCode) {
+      const found = await findUsableGiftCard(giftCardCode, { db, lock: true });
+      if (found.error) throw conflict('GIFT_CARD_INVALID', found.error);
+      giftCardAmount = giftCardPortion(found.card.balance, total);
+      if (giftCardAmount > 0) giftCard = found.card;
+    }
+
     const shippingAddress = {
       fullName: address.fullName,
       phone: address.phone,
@@ -283,14 +365,16 @@ export async function createOrderFromCart({ user, cartId, address, email, notes,
       try {
         order = await queryOne(
           `INSERT INTO orders (order_number, user_id, status, payment_status, payment_gateway, currency,
-                               subtotal, shipping_fee, discount, total, email, phone, shipping_address, notes, expires_at)
+                               subtotal, shipping_fee, discount, total, email, phone, shipping_address, notes, expires_at,
+                               discount_id, discount_code, discount_title, gift_card_id, gift_card_amount)
            VALUES ($1, $2, 'pending', 'pending', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                   now() + make_interval(mins => $13))
-           RETURNING id`,
+                   now() + make_interval(mins => $13), $14, $15, $16, $17, $18)
+           RETURNING id, order_number`,
           [
             generateOrderNumber(), user.id, gateway, config.store.currency,
-            totals.subtotal, totals.shippingFee, totals.discount, totals.total,
+            subtotal, shippingFee, discountAmount, total,
             email, user.phone, JSON.stringify(shippingAddress), notes, config.store.paymentTimeoutMinutes,
+            discount?.id ?? null, discount?.code ?? null, discount?.title ?? null, giftCard?.id ?? null, giftCardAmount,
           ],
           db,
         );
@@ -314,6 +398,9 @@ export async function createOrderFromCart({ user, cartId, address, email, notes,
         db,
       );
     }
+    if (giftCard) {
+      await redeemGiftCard(db, { cardId: giftCard.id, orderId: order.id, amount: giftCardAmount, note: `Order ${order.orderNumber}` });
+    }
     await addHistory(order.id, 'pending', 'Order placed, awaiting payment', user.id, db);
     return order.id;
   });
@@ -322,12 +409,58 @@ export async function createOrderFromCart({ user, cartId, address, email, notes,
 }
 
 /**
+ * Creates an unpaid gift card purchase (kind 'gift_card': no address, no
+ * stock, no discounts). The card is issued when the payment arrives.
+ */
+export async function createGiftCardOrder({ user, email, gateway, amount, recipientName, recipientEmail, senderName, message }) {
+  const orderId = await transaction(async (db) => {
+    let order;
+    for (let attempt = 0; !order; attempt++) {
+      await db.query('SAVEPOINT order_insert');
+      try {
+        order = await queryOne(
+          `INSERT INTO orders (order_number, user_id, kind, status, payment_status, payment_gateway, currency,
+                               subtotal, shipping_fee, discount, total, email, phone, shipping_address, expires_at)
+           VALUES ($1, $2, 'gift_card', 'pending', 'pending', $3, $4, $5, 0, 0, $5, $6, $7, NULL,
+                   now() + make_interval(mins => $8))
+           RETURNING id, order_number`,
+          [generateOrderNumber(), user.id, gateway, config.store.currency, amount, email, user.phone, config.store.paymentTimeoutMinutes],
+          db,
+        );
+      } catch (err) {
+        if (err.code === '23505' && err.constraint === 'orders_order_number_key' && attempt < 5) {
+          await db.query('ROLLBACK TO SAVEPOINT order_insert');
+          continue;
+        }
+        throw err;
+      }
+    }
+    await query(
+      `INSERT INTO order_items (order_id, product_name, sku, unit_price, quantity, line_total, gift_card_details)
+       VALUES ($1, $2, 'GIFT-CARD', $3, 1, $3, $4)`,
+      [order.id, `${config.store.name} gift card for ${recipientName}`, amount,
+        JSON.stringify({ recipientName, recipientEmail, senderName, message })],
+      db,
+    );
+    await addHistory(order.id, 'pending', 'Gift card order placed, awaiting payment', user.id, db);
+    return order.id;
+  });
+  return requireOrder({ id: orderId });
+}
+
+/**
  * Records a successful payment. Idempotent: calling it again for an already
- * paid order is a no-op. Returns the up-to-date order.
+ * paid order is a no-op. Returns the up-to-date order. Paid gift card orders
+ * get their cards issued and emailed and are marked delivered.
  */
 export async function markOrderPaid({ orderId, gateway, gatewayOrderId, gatewayPaymentId, amount, raw }) {
   const result = await transaction(async (db) => {
-    const o = await queryOne('SELECT id, user_id, status, payment_status, total FROM orders WHERE id = $1 FOR UPDATE', [orderId], db);
+    const o = await queryOne(
+      `SELECT id, order_number, kind, user_id, status, payment_status, amount_due, gift_card_id, gift_card_amount
+         FROM orders WHERE id = $1 FOR UPDATE`,
+      [orderId],
+      db,
+    );
     if (!o) throw notFound('Order not found');
 
     await query(
@@ -339,15 +472,18 @@ export async function markOrderPaid({ orderId, gateway, gatewayOrderId, gatewayP
 
     if (o.paymentStatus === 'paid' || o.paymentStatus === 'refunded') return { newlyPaid: false };
 
-    if (amount != null && amount !== o.total) {
+    if (amount != null && amount !== o.amountDue) {
       // Never happens with signed gateway data unless something is badly wrong; flag for review.
-      logger.error({ orderId, amount, expected: o.total }, 'Payment amount mismatch');
-      await addHistory(o.id, o.status, `Payment amount mismatch: received ${amount}, expected ${o.total}. Review required.`, null, db);
+      logger.error({ orderId, amount, expected: o.amountDue }, 'Payment amount mismatch');
+      await addHistory(o.id, o.status, `Payment amount mismatch: received ${amount}, expected ${o.amountDue}. Review required.`, null, db);
       return { newlyPaid: false };
     }
 
     const label = { razorpay: 'Razorpay', stripe: 'Stripe', mock: 'test payment' }[gateway] ?? gateway;
-    let note = `Payment received via ${label}${gatewayPaymentId ? ` (ref. ${gatewayPaymentId})` : ''}`;
+    let note =
+      gateway === 'gift_card'
+        ? 'Paid in full by gift card'
+        : `Payment received via ${label}${gatewayPaymentId ? ` (ref. ${gatewayPaymentId})` : ''}`;
     if (o.status === 'cancelled') {
       // Payment arrived after the order expired: try to re-reserve the stock.
       const items = await query('SELECT variant_id, quantity FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL ORDER BY variant_id', [o.id], db);
@@ -362,6 +498,9 @@ export async function markOrderPaid({ orderId, gateway, gatewayOrderId, gatewayP
       note += shortfall
         ? '. Payment arrived after the order had expired and some items are out of stock. Please review (refund or restock).'
         : '. Payment arrived after the order had expired; the order was reinstated.';
+      // The cancellation put the gift card amount back on the card; take it again.
+      const reclaimed = await reclaimGiftCardForOrder(db, { orderId: o.id, giftCardId: o.giftCardId, amount: o.giftCardAmount });
+      if (!reclaimed) note += ` The gift card no longer covers its ${formatMoney(o.giftCardAmount)} share; please collect the difference or refund.`;
     }
 
     await query(
@@ -373,6 +512,14 @@ export async function markOrderPaid({ orderId, gateway, gatewayOrderId, gatewayP
     );
     await addHistory(o.id, 'confirmed', note, null, db);
 
+    if (o.kind === 'gift_card') {
+      // Digital delivery: issue the card(s) now; they are emailed after commit.
+      const cardIds = await issuePurchasedGiftCards(db, o);
+      await query(`UPDATE orders SET status = 'delivered' WHERE id = $1`, [o.id], db);
+      await addHistory(o.id, 'delivered', 'Gift card issued and emailed to the recipient', null, db);
+      return { newlyPaid: true, cardIds };
+    }
+
     // Remove the purchased items from the customer's cart.
     await query(
       `DELETE FROM cart_items ci USING carts c
@@ -381,13 +528,17 @@ export async function markOrderPaid({ orderId, gateway, gatewayOrderId, gatewayP
       [o.userId, o.id],
       db,
     );
-    return { newlyPaid: true };
+    return { newlyPaid: true, cardIds: [] };
   });
 
   const order = await requireOrder({ id: orderId, admin: true });
   if (result.newlyPaid) {
+    for (const cardId of result.cardIds) {
+      const message = giftCardEmail(await giftCardForEmail(cardId));
+      if (message) queueEmail(message);
+    }
     queueEmail(orderConfirmedEmail(order));
-    queueOrderStatusSms(order, 'confirmed');
+    if (order.kind === 'goods') queueOrderStatusSms(order, 'confirmed');
     const adminMail = adminNewOrderEmail(order);
     if (adminMail) queueEmail(adminMail);
   }

@@ -49,6 +49,8 @@ const schema = z.object({
   COOKIE_SECURE: optionalString,
   COOKIE_DOMAIN: optionalString,
   OTP_SECRET: z.string().min(16, 'OTP_SECRET must be at least 16 characters'),
+  // Encrypts secrets saved in Admin → Settings. Defaults to a key derived from OTP_SECRET.
+  SETTINGS_ENCRYPTION_KEY: optionalString.refine((v) => !v || v.length >= 16, 'SETTINGS_ENCRYPTION_KEY must be at least 16 characters'),
   OTP_PROVIDER: z.enum(['console', 'msg91', 'twilio', 'twilio_verify']).default('console'),
   OTP_TTL_SECONDS: z.coerce.number().int().default(300),
   OTP_RESEND_SECONDS: z.coerce.number().int().default(60),
@@ -88,6 +90,9 @@ const schema = z.object({
   UPLOAD_DIR: z.string().default('uploads'),
   AWS_REGION: optionalString,
   AWS_S3_BUCKET: optionalString,
+  // Optional explicit S3 keys (otherwise the AWS SDK's default chain / IAM role is used).
+  AWS_ACCESS_KEY_ID: optionalString,
+  AWS_SECRET_ACCESS_KEY: optionalString,
   S3_PUBLIC_URL: optionalString,
 
   // Shipping
@@ -108,24 +113,62 @@ const schema = z.object({
   WATI_NOTIFY_NUMBER: optionalString,
 });
 
-function load() {
-  const parsed = schema.safeParse(process.env);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`).join('\n');
-    throw new Error(`Invalid environment configuration:\n${issues}`);
-  }
-  const env = parsed.data;
+/**
+ * Rules that involve more than one variable. Returns `[{ path, message }]`.
+ * - base:   rules on variables only .env can set; checked as soon as this module loads.
+ * - boot:   adds rules on variables that Admin → Settings can also provide; checked
+ *           once saved settings are applied (services/settings.js loadSettings).
+ * - strict: adds rules enforced only when an admin saves, so an existing .env that
+ *           boots today keeps booting.
+ */
+function crossFieldIssues(env, level) {
+  const issues = [];
   const isProd = env.NODE_ENV === 'production';
-
   if (isProd && env.OTP_EXPOSE_IN_RESPONSE) {
-    throw new Error('OTP_EXPOSE_IN_RESPONSE must not be enabled in production');
+    issues.push({ path: 'OTP_EXPOSE_IN_RESPONSE', message: 'OTP_EXPOSE_IN_RESPONSE must not be enabled in production' });
   }
+  if (level === 'base') return issues;
+
   if (isProd && env.OTP_PROVIDER === 'console') {
-    throw new Error('OTP_PROVIDER=console is not allowed in production; use msg91, twilio or twilio_verify');
+    issues.push({ path: 'OTP_PROVIDER', message: 'The console OTP provider is not allowed in production; use msg91, twilio or twilio_verify' });
   }
   if (env.OTP_PROVIDER === 'twilio_verify' && !(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_VERIFY_SERVICE_SID)) {
-    throw new Error('OTP_PROVIDER=twilio_verify requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_VERIFY_SERVICE_SID');
+    issues.push({ path: 'OTP_PROVIDER', message: 'Twilio Verify needs the Twilio account SID, auth token and Verify service SID' });
   }
+  if (level === 'boot') return issues;
+
+  if (env.OTP_PROVIDER === 'twilio' && !(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && (env.TWILIO_FROM || env.TWILIO_MESSAGING_SERVICE_SID))) {
+    issues.push({ path: 'OTP_PROVIDER', message: 'Twilio SMS needs the account SID, auth token and a sender (From or Messaging Service SID)' });
+  }
+  if (env.OTP_PROVIDER === 'msg91' && !(env.MSG91_AUTH_KEY && env.MSG91_TEMPLATE_ID)) {
+    issues.push({ path: 'OTP_PROVIDER', message: 'MSG91 needs the auth key and template ID' });
+  }
+  if (env.STORAGE_DRIVER === 's3' && !(env.AWS_REGION && env.AWS_S3_BUCKET)) {
+    issues.push({ path: 'STORAGE_DRIVER', message: 'Amazon S3 storage needs the AWS region and bucket' });
+  }
+  if (env.SHIPPING_PROVIDER === 'shiprocket' && !(env.SHIPROCKET_EMAIL && env.SHIPROCKET_PASSWORD)) {
+    issues.push({ path: 'SHIPPING_PROVIDER', message: 'Shiprocket needs the API user email and password' });
+  }
+  return issues;
+}
+
+/** Parses and checks a set of raw (string) variables. `level` is base, boot or strict (see above). */
+export function checkEnv(source, { level = 'boot' } = {}) {
+  const parsed = schema.safeParse(source);
+  if (!parsed.success) {
+    return { ok: false, issues: parsed.error.issues.map((i) => ({ path: String(i.path[0] ?? ''), message: i.message })) };
+  }
+  const issues = crossFieldIssues(parsed.data, level);
+  return issues.length ? { ok: false, issues } : { ok: true, env: parsed.data };
+}
+
+function build(source, level = 'boot') {
+  const result = checkEnv(source, { level });
+  if (!result.ok) {
+    throw new Error(`Invalid environment configuration:\n${result.issues.map((i) => `  - ${i.path}: ${i.message}`).join('\n')}`);
+  }
+  const env = result.env;
+  const isProd = env.NODE_ENV === 'production';
 
   return {
     env: env.NODE_ENV,
@@ -183,6 +226,11 @@ function load() {
       orderUpdates: env.ORDER_SMS_ENABLED,
     },
 
+    settings: {
+      encryptionKey: env.SETTINGS_ENCRYPTION_KEY ?? env.OTP_SECRET,
+      dedicatedKey: Boolean(env.SETTINGS_ENCRYPTION_KEY),
+    },
+
     razorpay: {
       enabled: Boolean(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET),
       keyId: env.RAZORPAY_KEY_ID,
@@ -212,7 +260,13 @@ function load() {
     storage: {
       driver: env.STORAGE_DRIVER,
       uploadDir: env.UPLOAD_DIR,
-      s3: { region: env.AWS_REGION, bucket: env.AWS_S3_BUCKET, publicUrl: env.S3_PUBLIC_URL },
+      s3: {
+        region: env.AWS_REGION,
+        bucket: env.AWS_S3_BUCKET,
+        publicUrl: env.S3_PUBLIC_URL,
+        accessKeyId: env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+      },
     },
 
     shipping: {
@@ -243,4 +297,17 @@ function load() {
   };
 }
 
-export const config = load();
+/**
+ * The live configuration. Built from the environment at startup; settings
+ * saved in the admin panel (services/settings.js) are layered on top with
+ * `applyOverrides`. Modules must read `config.x.y` when they need a value
+ * (not copy it at import time) so changes take effect without a restart.
+ */
+// Rules about settings that may live in the database are checked after they load.
+export const config = build(process.env, 'base');
+
+/** Rebuilds `config` from the environment plus `overrides` (raw string values keyed by env name). */
+export function applyOverrides(overrides) {
+  const next = build({ ...process.env, ...overrides });
+  for (const key of Object.keys(next)) config[key] = next[key];
+}

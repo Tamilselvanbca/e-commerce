@@ -150,6 +150,29 @@ export default function AdminOrderDetailPage() {
             />
           </Panel>
 
+          {!order.shippingAddress ? (
+            <Panel title="Gift card for" description="Bought online; delivered by email when paid.">
+              <ul className="space-y-3 text-sm">
+                {order.items
+                  .filter((i) => i.giftCard)
+                  .map((i) => (
+                    <li key={i.id} className="leading-6 text-zinc-700">
+                      <span className="font-medium text-zinc-900">{i.giftCard!.recipientName}</span>
+                      <span className="block break-all">{i.giftCard!.recipientEmail}</span>
+                      {i.giftCard!.senderName && <span className="block">From {i.giftCard!.senderName}</span>}
+                      {i.giftCard!.message && <span className="mt-1 block whitespace-pre-line italic text-zinc-600">&ldquo;{i.giftCard!.message}&rdquo;</span>}
+                      {i.giftCard!.id ? (
+                        <Link href={`/admin/gift-cards/${i.giftCard!.id}`} className="mt-1 inline-block font-mono text-brand-800 hover:underline">
+                          {i.giftCard!.code}
+                        </Link>
+                      ) : (
+                        <span className="mt-1 block text-xs text-zinc-500">The card is issued when the payment is confirmed.</span>
+                      )}
+                    </li>
+                  ))}
+              </ul>
+            </Panel>
+          ) : (
           <Panel title="Shipping address">
             <address className="text-sm not-italic leading-6 text-zinc-700">
               <span className="font-medium text-zinc-900">{order.shippingAddress.fullName}</span>
@@ -175,6 +198,7 @@ export default function AdminOrderDetailPage() {
               <span className="text-zinc-500">Phone: {order.shippingAddress.phone}</span>
             </address>
           </Panel>
+          )}
 
           <Panel title="Customer notes">
             {order.notes ? (
@@ -226,15 +250,41 @@ function ItemsPanel({ order }: { order: AdminOrder }) {
           <dd className="tabular-nums text-zinc-900">{order.shippingFee ? formatPrice(order.shippingFee) : "Free"}</dd>
         </div>
         {order.discount > 0 && (
-          <div className="flex justify-between">
-            <dt className="text-zinc-600">Discount</dt>
-            <dd className="tabular-nums text-zinc-900">−{formatPrice(order.discount)}</dd>
+          <div className="flex justify-between gap-3">
+            <dt className="min-w-0 text-zinc-600">
+              Discount
+              {(order.discountCode || order.discountTitle) && (
+                <span className="ml-1 break-all text-zinc-500">
+                  ({order.discountCode ? <span className="font-mono">{order.discountCode}</span> : `${order.discountTitle}, automatic`})
+                </span>
+              )}
+            </dt>
+            <dd className="shrink-0 tabular-nums text-zinc-900">−{formatPrice(order.discount)}</dd>
           </div>
         )}
         <div className="flex justify-between border-t border-zinc-100 pt-2 text-base font-semibold">
           <dt className="text-zinc-900">Total</dt>
           <dd className="tabular-nums text-zinc-900">{formatPrice(order.total)}</dd>
         </div>
+        {order.giftCardAmount > 0 && (
+          <>
+            <div className="flex justify-between gap-3">
+              <dt className="min-w-0 text-zinc-600">
+                Gift card
+                {order.giftCard?.id && (
+                  <Link href={`/admin/gift-cards/${order.giftCard.id}`} className="ml-1 font-mono text-zinc-500 underline-offset-2 hover:underline">
+                    {order.giftCard.code}
+                  </Link>
+                )}
+              </dt>
+              <dd className="shrink-0 tabular-nums text-zinc-900">−{formatPrice(order.giftCardAmount)}</dd>
+            </div>
+            <div className="flex justify-between font-semibold">
+              <dt className="text-zinc-900">Paid online</dt>
+              <dd className="tabular-nums text-zinc-900">{formatPrice(order.amountDue)}</dd>
+            </div>
+          </>
+        )}
       </dl>
     </Panel>
   );
@@ -306,7 +356,8 @@ function FulfilmentPanel({
   const canCancel = next.includes("cancelled");
   const canShip = ["confirmed", "processing", "shipped"].includes(order.status);
   const canShiprocket = ["confirmed", "processing"].includes(order.status);
-  const canRefund = order.status === "cancelled" && order.paymentStatus === "paid";
+  // Orders paid fully by gift card are refunded to the card on cancellation.
+  const canRefund = order.status === "cancelled" && order.paymentStatus === "paid" && order.amountDue > 0;
   const shipment = order.shipment;
 
   const openStatus = (s: OrderStatus) => {
@@ -358,10 +409,15 @@ function FulfilmentPanel({
     cancelled: (
       <div className="space-y-2">
         <p>This releases the reserved stock and emails the customer. It can&apos;t be undone.</p>
-        {isPaid && (
+        {order.giftCardAmount > 0 && (
+          <p className="rounded-md bg-zinc-50 px-2.5 py-2 text-zinc-700">
+            The {formatPrice(order.giftCardAmount)} paid by gift card goes back on the card automatically.
+          </p>
+        )}
+        {isPaid && order.amountDue > 0 && (
           <p className="rounded-md bg-amber-50 px-2.5 py-2 text-amber-900">
-            This order is paid. Refund it in the {order.paymentGateway ? GATEWAY_LABELS[order.paymentGateway] : "payment gateway"}{" "}
-            dashboard, then use “Mark refunded” here.
+            This order is paid. Refund {formatPrice(order.amountDue)} in the{" "}
+            {order.paymentGateway ? GATEWAY_LABELS[order.paymentGateway] : "payment gateway"} dashboard, then use “Mark refunded” here.
           </p>
         )}
       </div>
@@ -459,8 +515,9 @@ function FulfilmentPanel({
         description={
           <p>
             This only updates the record here. Make sure you&apos;ve already refunded{" "}
-            <span className="font-medium text-zinc-900">{formatPrice(order.total)}</span> in the{" "}
+            <span className="font-medium text-zinc-900">{formatPrice(order.amountDue)}</span> in the{" "}
             {order.paymentGateway ? GATEWAY_LABELS[order.paymentGateway] : "payment gateway"} dashboard.
+            {order.giftCardAmount > 0 && ` The ${formatPrice(order.giftCardAmount)} paid by gift card went back on the card when the order was cancelled.`}
           </p>
         }
         confirmLabel="Mark refunded"

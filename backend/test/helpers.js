@@ -11,7 +11,7 @@ export const newAgent = () => supertest.agent(app);
 
 /** Drops and recreates the schema, then inserts a small fixed catalog. */
 export async function resetDb() {
-  await migrate({ reset: true, silent: true });
+  await migrate({ reset: true, silent: true, keepSettings: false });
   const cat = await queryOne(`INSERT INTO categories (name, slug) VALUES ('Tees', 'tees') RETURNING id`);
   const tee = await queryOne(
     `INSERT INTO products (name, slug, description, category_id, is_featured)

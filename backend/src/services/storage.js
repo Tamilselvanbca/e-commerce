@@ -1,6 +1,6 @@
 // Image storage: local disk (development) or Amazon S3 (production).
-// S3 credentials are read by the AWS SDK from the standard environment
-// variables (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) or an IAM role.
+// S3 credentials come from Admin → Settings / AWS_ACCESS_KEY_ID and
+// AWS_SECRET_ACCESS_KEY when set, otherwise the AWS SDK's default chain (IAM role).
 import crypto from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -21,10 +21,19 @@ export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 export const uploadRoot = path.resolve(config.storage.uploadDir);
 
 let s3 = null;
+let s3For = null;
 function s3Client() {
-  const { region, bucket } = config.storage.s3;
+  const { region, bucket, accessKeyId, secretAccessKey } = config.storage.s3;
   if (!region || !bucket) throw new Error('AWS_REGION and AWS_S3_BUCKET are required for STORAGE_DRIVER=s3');
-  s3 ??= new S3Client({ region });
+  const key = JSON.stringify([region, accessKeyId, secretAccessKey]);
+  if (key !== s3For) {
+    s3?.destroy();
+    s3 = new S3Client({
+      region,
+      ...(accessKeyId && secretAccessKey ? { credentials: { accessKeyId, secretAccessKey } } : {}),
+    });
+    s3For = key;
+  }
   return s3;
 }
 

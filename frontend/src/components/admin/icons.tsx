@@ -168,6 +168,30 @@ export const IconStar = ({ filled, ...p }: IconProps & { filled?: boolean }) => 
   </Svg>
 );
 
+export const IconSettings = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M10.3 3.6a1.7 1.7 0 0 1 3.4 0l.1.7a1.7 1.7 0 0 0 2.5 1.1l.6-.4a1.7 1.7 0 0 1 2.4 2.4l-.4.6a1.7 1.7 0 0 0 1.1 2.5l.7.1a1.7 1.7 0 0 1 0 3.4l-.7.1a1.7 1.7 0 0 0-1.1 2.5l.4.6a1.7 1.7 0 0 1-2.4 2.4l-.6-.4a1.7 1.7 0 0 0-2.5 1.1l-.1.7a1.7 1.7 0 0 1-3.4 0l-.1-.7a1.7 1.7 0 0 0-2.5-1.1l-.6.4a1.7 1.7 0 0 1-2.4-2.4l.4-.6a1.7 1.7 0 0 0-1.1-2.5l-.7-.1a1.7 1.7 0 0 1 0-3.4l.7-.1a1.7 1.7 0 0 0 1.1-2.5l-.4-.6a1.7 1.7 0 0 1 2.4-2.4l.6.4a1.7 1.7 0 0 0 2.5-1.1l.1-.7Z" />
+    <circle cx="12" cy="12" r="3" />
+  </Svg>
+);
+
+export const IconTag = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9-9-9Z" />
+    <path d="m9 15 6-6" />
+    <circle cx="9.5" cy="9.5" r="0.75" fill="currentColor" />
+    <circle cx="14.5" cy="14.5" r="0.75" fill="currentColor" />
+  </Svg>
+);
+
+export const IconGift = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="8" width="18" height="4" rx="1" />
+    <path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8M12 8v13" />
+    <path d="M12 8S10.5 3.5 8 3.5a2.25 2.25 0 0 0 0 4.5h4ZM12 8s1.5-4.5 4-4.5a2.25 2.25 0 0 1 0 4.5h-4Z" />
+  </Svg>
+);
+
 export const IconCopy = (p: IconProps) => (
   <Svg {...p}>
     <rect x="8" y="8" width="12" height="12" rx="2" />

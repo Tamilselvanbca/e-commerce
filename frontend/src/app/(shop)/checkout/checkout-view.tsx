@@ -3,13 +3,14 @@
 import { useCallback, useId, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api, ApiError, errorMessage } from "@/lib/api";
+import { api, ApiError, buildQuery, errorMessage } from "@/lib/api";
 import { cn, variantLabel } from "@/lib/format";
-import type { Address, CartItem, CheckoutSummary, Gateway, Order, PaymentInit, User } from "@/lib/types";
+import type { Address, CartItem, CheckoutSummary, OnlineGateway, Order, PaymentInit, User } from "@/lib/types";
 import { useAuth, useToast } from "@/components/providers";
 import { Badge, Button, ButtonLink, EmptyState, Field, Input, Textarea } from "@/components/ui";
 import { AddressForm, AddressLines } from "@/components/shop/address-form";
-import { BagIcon, PlusIcon, ShieldIcon } from "@/components/shop/icons";
+import { CheckoutCodes } from "@/components/shop/checkout-codes";
+import { BagIcon, GiftIcon, PlusIcon, ShieldIcon } from "@/components/shop/icons";
 import { GATEWAY_OPTIONS, LineItems, Totals } from "@/components/shop/order-bits";
 import { Notice } from "@/components/shop/section";
 import { useApi } from "@/components/shop/use-api";
@@ -104,13 +105,22 @@ function CheckoutForm({
   const [adding, setAdding] = useState(initialAddresses.length === 0);
   const [email, setEmail] = useState(user.email ?? "");
   const [emailError, setEmailError] = useState<string | null>(null);
-  // Shipping depends on the destination, so re-price for the selected address.
-  const quote = useApi<CheckoutSummary>(addressId ? `/checkout/summary?addressId=${addressId}` : null);
+  // Codes the customer applied; they're part of the pricing request below.
+  const [couponCode, setCouponCode] = useState("");
+  const [giftCardCode, setGiftCardCode] = useState("");
+  // Shipping depends on the destination, so re-price for the selected address and codes.
+  const quote = useApi<CheckoutSummary>(
+    addressId || couponCode || giftCardCode
+      ? `/checkout/summary${buildQuery({ addressId, couponCode, giftCardCode })}`
+      : null,
+  );
   const pricing = quote.data ?? summary;
   const international = pricing.international;
+  // The gift card covers everything: no online payment needed.
+  const coveredByGiftCard = Boolean(giftCardCode && pricing.giftCard?.applied && pricing.amountDue === 0);
   // Until the customer picks one, suggest Stripe (international cards) for overseas addresses.
-  const [chosenGateway, setGateway] = useState<Gateway | null>(null);
-  const suggestedGateway: Gateway | null =
+  const [chosenGateway, setGateway] = useState<OnlineGateway | null>(null);
+  const suggestedGateway: OnlineGateway | null =
     international && summary.gateways.includes("stripe") ? "stripe" : (summary.gateways.find((g) => g !== "stripe") ?? summary.gateways[0] ?? null);
   const gateway = chosenGateway && summary.gateways.includes(chosenGateway) ? chosenGateway : suggestedGateway;
   const [notes, setNotes] = useState("");
@@ -151,7 +161,7 @@ function CheckoutForm({
       setPlaceError({ kind: "generic", message: "Select a delivery address or add a new one." });
       return;
     }
-    if (!gateway) {
+    if (!gateway && !coveredByGiftCard) {
       setPlaceError({ kind: "generic", message: "Select a payment method." });
       return;
     }
@@ -163,7 +173,10 @@ function CheckoutForm({
         method: "POST",
         body: {
           addressId,
-          gateway,
+          gateway: coveredByGiftCard ? "gift_card" : gateway,
+          // Only send codes that apply, so a stale code can't block the order.
+          ...(couponCode && pricing.coupon?.applied ? { couponCode } : {}),
+          ...(giftCardCode && pricing.giftCard?.applied ? { giftCardCode } : {}),
           ...(trimmedEmail ? { email: trimmedEmail } : {}),
           ...(notes.trim() ? { notes: notes.trim() } : {}),
         },
@@ -172,6 +185,11 @@ function CheckoutForm({
       setSubmitting(false);
       if (err instanceof ApiError && err.code === "OUT_OF_STOCK") setPlaceError({ kind: "stock", lines: stockLines(err, items) });
       else if (err instanceof ApiError && err.code === "CART_EMPTY") setPlaceError({ kind: "empty" });
+      else if (err instanceof ApiError && ["COUPON_INVALID", "GIFT_CARD_INVALID", "GIFT_CARD_INSUFFICIENT"].includes(err.code)) {
+        // Something changed since the preview (e.g. the code ran out); show fresh prices.
+        setPlaceError({ kind: "generic", message: `${err.message} Your order summary has been updated.` });
+        quote.reload();
+      }
       else if (err instanceof ApiError && err.code === "GATEWAY_ERROR")
         setPlaceError({
           kind: "generic",
@@ -194,7 +212,12 @@ function CheckoutForm({
 
   const busy = submitting || processing;
   const canPlace =
-    !busy && unavailable.length === 0 && summary.gateways.length > 0 && Boolean(addressId) && !adding && !quote.loading;
+    !busy &&
+    unavailable.length === 0 &&
+    (summary.gateways.length > 0 || coveredByGiftCard) &&
+    Boolean(addressId) &&
+    !adding &&
+    !quote.loading;
 
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_24rem] lg:items-start xl:gap-12">
@@ -290,7 +313,15 @@ function CheckoutForm({
 
         {/* 3. Payment */}
         <StepCard step={3} title="Payment method">
-          {summary.gateways.length === 0 ? (
+          {coveredByGiftCard ? (
+            <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+              <GiftIcon className="mt-0.5 size-5 text-emerald-700" />
+              <span>
+                <span className="block font-medium">Paid with your gift card</span>
+                Your gift card covers the whole order, so there&apos;s nothing to pay online.
+              </span>
+            </div>
+          ) : summary.gateways.length === 0 ? (
             <Notice tone="warning" title="Online payments are temporarily unavailable">
               Please try again later or contact us to complete your order.
             </Notice>
@@ -359,7 +390,25 @@ function CheckoutForm({
             }))}
           />
           <div className="mt-5 border-t border-zinc-200 pt-5">
-            <Totals subtotal={pricing.subtotal} shippingFee={pricing.shippingFee} discount={pricing.discount} total={pricing.total} />
+            <CheckoutCodes
+              pricing={pricing}
+              couponCode={couponCode}
+              giftCardCode={giftCardCode}
+              onCouponChange={setCouponCode}
+              onGiftCardChange={setGiftCardCode}
+              pending={quote.loading}
+            />
+          </div>
+          <div className={cn("mt-5 border-t border-zinc-200 pt-5 transition-opacity", quote.loading && "opacity-60")} aria-busy={quote.loading || undefined}>
+            <Totals
+              subtotal={pricing.subtotal}
+              shippingFee={pricing.shippingFee}
+              discount={pricing.discount}
+              discountLabel={pricing.appliedDiscount ? (pricing.appliedDiscount.code ?? pricing.appliedDiscount.title) : null}
+              total={pricing.total}
+              giftCardAmount={pricing.giftCardAmount}
+              amountDue={pricing.amountDue}
+            />
             {international && (
               <p className="mt-3 text-xs leading-5 text-zinc-500">
                 International delivery. Prices are charged in Indian Rupees; your card provider converts to your currency.
@@ -401,7 +450,7 @@ function CheckoutForm({
           </div>
 
           <Button size="lg" className="mt-5 w-full" onClick={placeOrder} loading={busy} disabled={!canPlace}>
-            {busy ? "Processing…" : "Place order & pay"}
+            {busy ? "Processing…" : coveredByGiftCard ? "Place order" : "Place order & pay"}
           </Button>
           {adding && addresses.length > 0 && (
             <p className="mt-2 text-center text-xs text-zinc-500">Save or cancel the new address to continue.</p>
