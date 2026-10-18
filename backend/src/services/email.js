@@ -105,7 +105,7 @@ function itemsTable(order) {
     <tr><th align="left" style="padding-bottom:8px">Item</th><th style="padding-bottom:8px">Qty</th><th align="right" style="padding-bottom:8px">Total</th></tr>
     ${rows}
     ${line('Subtotal', formatMoney(order.subtotal, order.currency))}
-    ${line('Shipping', order.shippingFee ? formatMoney(order.shippingFee, order.currency) : 'Free')}
+    ${order.kind === 'gift_card' ? '' : line('Shipping', order.shippingFee ? formatMoney(order.shippingFee, order.currency) : 'Free')}
     ${order.discount ? line(`Discount${order.discountCode ? ` (${esc(order.discountCode)})` : order.discountTitle ? ` (${esc(order.discountTitle)})` : ''}`, `-${formatMoney(order.discount, order.currency)}`) : ''}
     ${line('Total', formatMoney(order.total, order.currency), true)}
     ${order.giftCardAmount ? line('Paid by gift card', `-${formatMoney(order.giftCardAmount, order.currency)}`) : ''}
@@ -148,7 +148,34 @@ const orderLink = (order) =>
   `<p style="margin:24px 0"><a href="${config.frontendUrl}/account/orders/${encodeURIComponent(order.orderNumber)}"
      style="background:#c2410c;color:#ffffff;padding:12px 20px;border-radius:6px;text-decoration:none;font-size:14px">View your order</a></p>`;
 
+/** "Asha (asha@example.com)" for each gift card in a purchase. */
+const giftCardRecipients = (order) =>
+  order.items
+    .filter((i) => i.giftCard)
+    .map((i) => `${i.giftCard.recipientName}${i.giftCard.recipientEmail ? ` (${i.giftCard.recipientEmail})` : ''}`);
+
+/** Delivery details for an order: the address, or who the gift card was emailed to. */
+function deliveryBlock(order) {
+  if (order.shippingAddress) return addressBlock(order.shippingAddress);
+  const to = giftCardRecipients(order).map(esc).join('<br>');
+  return `<p style="font-size:14px;line-height:1.5;margin:0">Gift card sent by email to:<br>${to}</p>`;
+}
+
 export function orderConfirmedEmail(order) {
+  if (order.kind === 'gift_card') {
+    const to = giftCardRecipients(order);
+    return {
+      to: order.email,
+      subject: `Your ${config.store.name} gift card is on its way`,
+      html: layout('Thank you for your gift card order!', `
+        <p style="font-size:14px">We've received your payment for order <strong>${esc(order.orderNumber)}</strong>
+        and emailed the gift card to <strong>${to.map(esc).join(', ')}</strong>.</p>
+        ${itemsTable(order)}
+        <p style="font-size:13px;color:#71717a">If it doesn't arrive, ask them to check their spam folder or reply to this email and we'll resend it.</p>
+        ${orderLink(order)}`),
+      text: `Thank you! Your gift card (order ${order.orderNumber}, ${formatMoney(order.total, order.currency)}) was emailed to ${to.join(', ')}.`,
+    };
+  }
   return {
     to: order.email,
     subject: `Order confirmed: ${order.orderNumber}`,
@@ -207,9 +234,9 @@ export function adminNewOrderEmail(order) {
   return {
     to: config.email.adminNotify,
     subject: `New order ${order.orderNumber}: ${formatMoney(order.total, order.currency)}`,
-    html: layout(`New paid order ${order.orderNumber}`, `
+    html: layout(`New paid ${order.kind === 'gift_card' ? 'gift card order' : 'order'} ${order.orderNumber}`, `
       ${itemsTable(order)}
-      ${addressBlock(order.shippingAddress)}
+      ${deliveryBlock(order)}
       <p style="margin:24px 0"><a href="${config.frontendUrl}/admin/orders/${encodeURIComponent(order.orderNumber)}">Open in admin</a></p>`),
     text: `New order ${order.orderNumber}, total ${formatMoney(order.total, order.currency)}`,
   };

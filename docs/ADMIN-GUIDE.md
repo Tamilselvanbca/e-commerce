@@ -186,7 +186,13 @@ email with the 16-character code, such as `K7QM-2XPA-9RTW-4HNE`.
   reason), edit the recipient or expiry, or **Disable** it. The **History** lists every use with its order.
 - The header of the list shows the total unspent balance across active cards.
 
-Selling gift cards: take the order on WhatsApp or the enquiry form, collect payment, then issue the card here.
+**Selling gift cards online:** customers buy them on the **Gift cards** page (₹100 to ₹50,000, paid with
+Razorpay or Stripe). Once paid, the card is created and emailed to the recipient automatically, valid for a
+year, and the order appears under **Orders** as already delivered, with a link to the card. To refund one,
+disable the card first, then refund the payment in the Razorpay/Stripe dashboard.
+
+For corporate or bulk gifting, take the order on WhatsApp or the enquiry form, collect payment, then issue
+the cards here.
 
 ## Settings
 

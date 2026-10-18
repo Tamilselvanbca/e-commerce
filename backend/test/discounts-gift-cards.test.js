@@ -234,6 +234,72 @@ describe('gift cards', () => {
   });
 });
 
+describe('buying gift cards online', () => {
+  const buy = (body) =>
+    agent
+      .post('/api/gift-cards/purchase')
+      .send({ amount: 100000, recipientName: 'Meena', recipientEmail: 'Meena@Example.com', message: 'Happy Diwali!', gateway: 'mock', email: 'buyer@example.com', ...body });
+
+  test('validates the request and requires login', async () => {
+    await newAgent().post('/api/gift-cards/purchase').send({ amount: 100000 }).expect(401);
+    let res = await buy({ amount: 5000 }).expect(400);
+    assert.equal(res.body.error.details[0].path, 'amount');
+    res = await buy({ amount: 100050 }).expect(400);
+    assert.match(res.body.error.message, /whole rupee/);
+    res = await buy({ recipientEmail: 'nope' }).expect(400);
+    assert.equal(res.body.error.details[0].path, 'recipientEmail');
+  });
+
+  test('paying issues the card once, marks the order delivered and the card works at checkout', async () => {
+    const res = await buy().expect(201);
+    const { order, payment } = res.body;
+    assert.equal(order.kind, 'gift_card');
+    assert.equal(order.shippingAddress, null);
+    assert.equal(order.total, 100000);
+    assert.equal(payment.amount, 100000);
+    assert.equal(order.items[0].giftCard.recipientEmail, 'meena@example.com');
+    assert.equal(order.items[0].giftCard.code, null);
+    assert.equal((await query('SELECT id FROM gift_cards')).length, 0);
+
+    // The cart (Test Tee M from beforeEach) is untouched and the stale-order sweep ignores this order.
+    const cart = await agent.get('/api/cart').expect(200);
+    assert.equal(cart.body.items.length, 1);
+
+    await payMock(res);
+    await payMock(res); // a repeated confirmation must not issue a second card
+    const cards = await query('SELECT initial_balance, balance, recipient_email, message, expires_at FROM gift_cards');
+    assert.equal(cards.length, 1);
+    assert.equal(cards[0].initialBalance, 100000);
+    assert.equal(cards[0].recipientEmail, 'meena@example.com');
+    assert.equal(cards[0].message, 'Happy Diwali!');
+    assert.ok(new Date(cards[0].expiresAt) > new Date(Date.now() + 360 * 86_400_000));
+
+    const mine = await agent.get(`/api/orders/${order.orderNumber}`).expect(200);
+    assert.equal(mine.body.status, 'delivered');
+    assert.equal(mine.body.paymentStatus, 'paid');
+    assert.match(mine.body.items[0].giftCard.code, /^••••-[A-Z2-9]{4}$/);
+
+    const adminView = await admin.get(`/api/admin/orders/${order.orderNumber}`).expect(200);
+    const fullCode = adminView.body.items[0].giftCard.code;
+    assert.match(fullCode, /^[A-Z2-9]{4}(-[A-Z2-9]{4}){3}$/);
+    assert.ok(adminView.body.items[0].giftCard.id);
+
+    const preview = await summary({ giftCardCode: fullCode });
+    assert.equal(preview.giftCardAmount, 54900);
+    assert.equal(preview.amountDue, 0);
+  });
+
+  test('an unpaid gift card order expires cleanly', async () => {
+    const res = await buy().expect(201);
+    await query(`UPDATE orders SET expires_at = now() - interval '1 minute' WHERE id = $1`, [res.body.order.id]);
+    const { expireStaleOrders } = await import('../src/services/orders.js');
+    assert.equal(await expireStaleOrders(), 1);
+    const order = await agent.get(`/api/orders/${res.body.order.orderNumber}`).expect(200);
+    assert.equal(order.body.status, 'cancelled');
+    assert.equal((await query('SELECT id FROM gift_cards')).length, 0);
+  });
+});
+
 describe('admin discounts', () => {
   test('validates input, rejects duplicate codes and protects used discounts', async () => {
     let res = await admin.post('/api/admin/discounts').send({ code: 'X1Y', title: 'Bad', type: 'percent', value: 150 }).expect(400);

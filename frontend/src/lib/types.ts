@@ -38,6 +38,8 @@ export type StoreConfig = {
     stripe: { enabled: boolean };
     mock: { enabled: boolean };
   };
+  /** Limits for buying gift cards online (paise). */
+  giftCardPurchase: { min: number; max: number };
 };
 
 export type Category = {
@@ -189,9 +191,13 @@ export type PaymentStatus = "pending" | "paid" | "failed" | "refunded";
 export type Gateway = "razorpay" | "stripe" | "mock" | "gift_card";
 export type OnlineGateway = Exclude<Gateway, "gift_card">;
 
+/** "gift_card" = a gift card bought online (no delivery address, delivered by email). */
+export type OrderKind = "goods" | "gift_card";
+
 export type OrderSummary = {
   id: string;
   orderNumber: string;
+  kind: OrderKind;
   status: OrderStatus;
   paymentStatus: PaymentStatus;
   paymentGateway: Gateway | null;
@@ -214,6 +220,15 @@ export type OrderItem = {
   unitPrice: number;
   quantity: number;
   lineTotal: number;
+  /** Gift card purchases: who it's for and, once paid, the issued card (masked for customers). */
+  giftCard: {
+    recipientName: string;
+    recipientEmail: string;
+    senderName: string | null;
+    message: string | null;
+    code: string | null;
+    id?: string; // admin endpoints only
+  } | null;
 };
 
 export type Shipment = {
@@ -240,7 +255,8 @@ export type Order = OrderSummary & {
   email: string | null;
   phone: string | null;
   notes: string | null;
-  shippingAddress: Omit<Address, "id" | "isDefault">;
+  /** null for gift card purchases. */
+  shippingAddress: Omit<Address, "id" | "isDefault"> | null;
   items: OrderItem[];
   statusHistory: { status: string; note: string | null; createdAt: string }[];
   shipment: Shipment | null;

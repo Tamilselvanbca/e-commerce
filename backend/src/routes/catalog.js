@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { notFound } from '../lib/errors.js';
 import { parse } from '../lib/validate.js';
 import { getProduct, listCategories, listProducts, relatedProducts } from '../services/catalog.js';
+import { GIFT_CARD_PURCHASE } from '../services/gift-cards.js';
 import { enabledGateways } from '../services/payments.js';
 
 const router = Router();
@@ -29,6 +30,8 @@ router.get('/config', (_req, res) => {
       stripe: { enabled: gateways.includes('stripe') },
       mock: { enabled: gateways.includes('mock') },
     },
+    // Limits for buying gift cards online (paise).
+    giftCardPurchase: { min: GIFT_CARD_PURCHASE.min, max: GIFT_CARD_PURCHASE.max },
   });
 });
 

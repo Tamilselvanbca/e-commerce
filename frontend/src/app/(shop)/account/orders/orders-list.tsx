@@ -63,7 +63,7 @@ export function OrdersList({ page }: { page: number }) {
                         {o.status !== "cancelled" && o.paymentStatus !== "paid" && <PaymentStatusBadge status={o.paymentStatus} />}
                       </div>
                       <p className="mt-1 text-sm text-zinc-600">
-                        {formatDate(o.createdAt)} · {o.itemCount} {o.itemCount === 1 ? "item" : "items"}
+                        {formatDate(o.createdAt)} · {o.kind === "gift_card" ? "Gift card" : `${o.itemCount} ${o.itemCount === 1 ? "item" : "items"}`}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">

@@ -8,7 +8,7 @@ import { useCart } from "@/components/providers";
 import { ButtonLink, Card, EmptyState, Spinner } from "@/components/ui";
 import { AddressLines } from "@/components/shop/address-form";
 import { AlertIcon, CheckCircleIcon, ClockIcon, XCircleIcon } from "@/components/shop/icons";
-import { LineItems, orderItemLine, Totals } from "@/components/shop/order-bits";
+import { GiftCardRecipients, LineItems, orderItemLine, Totals } from "@/components/shop/order-bits";
 import { orderHref } from "@/components/shop/use-payment";
 import { loginHref } from "@/components/shop/utils";
 
@@ -117,7 +117,26 @@ export function SuccessView({ orderNumber, sessionId }: { orderNumber: string | 
   const stillWaiting = awaiting && polls >= MAX_POLLS;
 
   let header: { icon: React.ReactNode; title: string; text: React.ReactNode; tone: string };
-  if (paid) {
+  const giftCardOrder = order.kind === "gift_card";
+  if (paid && giftCardOrder) {
+    const to = order.items.find((i) => i.giftCard)?.giftCard;
+    header = {
+      icon: <CheckCircleIcon className="size-12" />,
+      tone: "text-emerald-600",
+      title: "Thank you! Your gift card is on its way.",
+      text: (
+        <>
+          We&apos;ve emailed the gift card{to ? <> to <span className="font-medium text-zinc-900">{to.recipientName}</span></> : null}
+          {order.email ? (
+            <>
+              {" "}and sent your receipt to <span className="font-medium text-zinc-900">{order.email}</span>
+            </>
+          ) : null}
+          .
+        </>
+      ),
+    };
+  } else if (paid) {
     header = {
       icon: <CheckCircleIcon className="size-12" />,
       tone: "text-emerald-600",
@@ -182,8 +201,17 @@ export function SuccessView({ orderNumber, sessionId }: { orderNumber: string | 
       <Card className="mt-10 overflow-hidden">
         <div className="grid gap-6 p-5 sm:grid-cols-2 sm:p-6">
           <div>
-            <h2 className="text-sm font-semibold text-zinc-900">Delivering to</h2>
-            <AddressLines address={order.shippingAddress} className="mt-2 not-italic text-sm leading-6 text-zinc-600" />
+            {order.shippingAddress ? (
+              <>
+                <h2 className="text-sm font-semibold text-zinc-900">Delivering to</h2>
+                <AddressLines address={order.shippingAddress} className="mt-2 not-italic text-sm leading-6 text-zinc-600" />
+              </>
+            ) : (
+              <>
+                <h2 className="text-sm font-semibold text-zinc-900">Gift card for</h2>
+                <GiftCardRecipients order={order} className="mt-2" />
+              </>
+            )}
           </div>
           <div>
             <h2 className="text-sm font-semibold text-zinc-900">Total</h2>
@@ -197,6 +225,7 @@ export function SuccessView({ orderNumber, sessionId }: { orderNumber: string | 
           <LineItems items={order.items.map(orderItemLine)} currency={order.currency} />
           <div className="mt-5 border-t border-zinc-200 pt-5">
             <Totals
+              hideShipping={giftCardOrder}
               subtotal={order.subtotal}
               shippingFee={order.shippingFee}
               discount={order.discount}

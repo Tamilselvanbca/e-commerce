@@ -107,7 +107,9 @@ type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
 type Gateway = 'razorpay' | 'stripe' | 'mock' | 'gift_card'; // gift_card = paid in full by a gift card
 
 type OrderSummary = {
-  id: string; orderNumber: string; status: OrderStatus; paymentStatus: PaymentStatus;
+  id: string; orderNumber: string;
+  kind: 'goods' | 'gift_card';  // gift_card = gift card bought online (no address, delivered by email)
+  status: OrderStatus; paymentStatus: PaymentStatus;
   paymentGateway: Gateway | null; total: number; itemCount: number;
   previewImage: string | null; createdAt: string;
   customer?: { id: string; name: string | null; phone: string }; // admin endpoints only
@@ -327,11 +329,20 @@ Errors: `409 CART_EMPTY`, `409 OUT_OF_STOCK` (`details.items: [{ variantId, avai
 
 The cart is **cleared once payment succeeds**, not at order creation.
 
-## Gift card balance (public)
+## Gift cards
 
-### `POST /gift-cards/balance` (rate limited)
+### `POST /gift-cards/balance` (public, rate limited)
 Body `{ "code": string }` → `{ "code": "••••-4HNE", "balance": number, "currency": "INR",
 "expiresAt": string | null, "usable": boolean, "message": string | null }`. `404` if no such card.
+
+### `POST /gift-cards/purchase` (auth)
+Buy a gift card online. Body `{ "amount": paise (whole rupees, within config.giftCardPurchase), "recipientName",
+"recipientEmail", "senderName"?, "message"?, "gateway": "razorpay" | "stripe" | "mock", "email"? }` →
+`201 { order, payment: PaymentInit }`, completed with the same payment endpoints as checkout.
+The order has `kind: "gift_card"`, `shippingAddress: null` and one item whose `giftCard` holds the recipient.
+When the payment is confirmed the card is issued (valid 365 days), emailed to the recipient, the buyer gets a
+receipt and the order becomes `delivered`; `items[].giftCard.code` then shows the card (masked for customers).
+Discount codes and gift cards can't be used to buy gift cards.
 
 ---
 

@@ -9,7 +9,15 @@ import { useStoreConfig, useToast } from "@/components/providers";
 import { Button, ButtonLink, Card, EmptyState, Modal } from "@/components/ui";
 import { AddressLines } from "@/components/shop/address-form";
 import { ChevronLeftIcon, ClockIcon, ExternalIcon, TruckIcon } from "@/components/shop/icons";
-import { GATEWAY_OPTIONS, LineItems, orderItemLine, OrderStatusBadge, PaymentStatusBadge, Totals } from "@/components/shop/order-bits";
+import {
+  GATEWAY_OPTIONS,
+  GiftCardRecipients,
+  LineItems,
+  orderItemLine,
+  OrderStatusBadge,
+  PaymentStatusBadge,
+  Totals,
+} from "@/components/shop/order-bits";
 import { OrderProgress, StatusTimeline, TrackingEvents } from "@/components/shop/order-progress";
 import { Notice } from "@/components/shop/section";
 import { useApi } from "@/components/shop/use-api";
@@ -160,9 +168,11 @@ function OrderView({
           </Notice>
         )}
 
-        <div className="mt-6">
-          <OrderProgress order={order} />
-        </div>
+        {order.kind === "goods" && (
+          <div className="mt-6">
+            <OrderProgress order={order} />
+          </div>
+        )}
       </Card>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
@@ -173,6 +183,7 @@ function OrderView({
             <LineItems items={order.items.map(orderItemLine)} currency={order.currency} />
             <div className="mt-5 border-t border-zinc-200 pt-5">
               <Totals
+                hideShipping={order.kind === "gift_card"}
                 subtotal={order.subtotal}
                 shippingFee={order.shippingFee}
                 discount={order.discount}
@@ -238,8 +249,17 @@ function OrderView({
 
         <div className="space-y-6">
           <Card className="p-5 sm:p-6">
-            <h3 className="text-base font-semibold text-zinc-900">Shipping address</h3>
-            <AddressLines address={order.shippingAddress} className="mt-3 not-italic text-sm leading-6 text-zinc-600" />
+            {order.shippingAddress ? (
+              <>
+                <h3 className="text-base font-semibold text-zinc-900">Shipping address</h3>
+                <AddressLines address={order.shippingAddress} className="mt-3 not-italic text-sm leading-6 text-zinc-600" />
+              </>
+            ) : (
+              <>
+                <h3 className="text-base font-semibold text-zinc-900">Gift card for</h3>
+                <GiftCardRecipients order={order} className="mt-3" />
+              </>
+            )}
           </Card>
           <Card className="p-5 sm:p-6">
             <h3 className="text-base font-semibold text-zinc-900">Payment</h3>

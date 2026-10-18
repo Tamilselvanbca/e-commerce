@@ -100,7 +100,8 @@ export async function redeemGiftCard(db, { cardId, orderId, amount, note = null 
 /** Net amount an order currently holds on its gift card (positive = taken from the card). */
 async function heldForOrder(db, orderId) {
   const row = await queryOne(
-    'SELECT gift_card_id, coalesce(-sum(amount), 0) AS held FROM gift_card_transactions WHERE order_id = $1 GROUP BY gift_card_id',
+    `SELECT gift_card_id, coalesce(-sum(amount), 0) AS held FROM gift_card_transactions
+      WHERE order_id = $1 AND kind IN ('redeem', 'refund') GROUP BY gift_card_id`,
     [orderId],
     db,
   );
@@ -207,31 +208,70 @@ export async function getGiftCard(id) {
   return { ...adminCard(g), transactions };
 }
 
-export async function createGiftCard(input, adminId) {
-  const id = await transaction(async (db) => {
-    for (let attempt = 0; ; attempt++) {
-      await db.query('SAVEPOINT gift_card_insert');
-      try {
-        const row = await queryOne(
-          `INSERT INTO gift_cards (code, initial_balance, balance, currency, recipient_name, recipient_email,
-                                   sender_name, message, expires_at, created_by)
-           VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-          [generateGiftCardCode(), input.amount, config.store.currency, input.recipientName, input.recipientEmail,
-            input.senderName, input.message, input.expiresAt, adminId],
-          db,
-        );
-        await addTransaction(db, { cardId: row.id, kind: 'issue', amount: input.amount, note: input.note ?? null, by: adminId });
-        return row.id;
-      } catch (err) {
-        if (err.code === '23505' && attempt < 5) {
-          await db.query('ROLLBACK TO SAVEPOINT gift_card_insert');
-          continue;
-        }
-        throw err;
+/** Inserts a card and its "issue" transaction inside `db`; retries on a (very unlikely) code collision. */
+async function insertGiftCard(db, input, adminId = null) {
+  for (let attempt = 0; ; attempt++) {
+    await db.query('SAVEPOINT gift_card_insert');
+    try {
+      const row = await queryOne(
+        `INSERT INTO gift_cards (code, initial_balance, balance, currency, recipient_name, recipient_email,
+                                 sender_name, message, expires_at, created_by, order_item_id)
+         VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+        [generateGiftCardCode(), input.amount, config.store.currency, input.recipientName ?? null, input.recipientEmail ?? null,
+          input.senderName ?? null, input.message ?? null, input.expiresAt ?? null, adminId, input.orderItemId ?? null],
+        db,
+      );
+      await addTransaction(db, { cardId: row.id, orderId: input.orderId ?? null, kind: 'issue', amount: input.amount, note: input.note ?? null, by: adminId });
+      return row.id;
+    } catch (err) {
+      if (err.code === '23505' && err.constraint === 'gift_cards_code_key' && attempt < 5) {
+        await db.query('ROLLBACK TO SAVEPOINT gift_card_insert');
+        continue;
       }
+      throw err;
     }
-  });
+  }
+}
+
+export async function createGiftCard(input, adminId) {
+  const id = await transaction((db) => insertGiftCard(db, input, adminId));
   return getGiftCard(id);
+}
+
+// Online purchases (whole rupees).
+export const GIFT_CARD_PURCHASE = { min: 100_00, max: 50_000_00, validityDays: 365 };
+
+/**
+ * Issues the cards for a paid gift card order (one per line). Idempotent:
+ * lines that already have a card are skipped. Returns the new card ids.
+ */
+export async function issuePurchasedGiftCards(db, order) {
+  const lines = await query(
+    `SELECT oi.id, oi.unit_price, oi.quantity, oi.gift_card_details
+       FROM order_items oi
+      WHERE oi.order_id = $1 AND oi.gift_card_details IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM gift_cards g WHERE g.order_item_id = oi.id)`,
+    [order.id],
+    db,
+  );
+  const ids = [];
+  for (const line of lines) {
+    const d = line.giftCardDetails;
+    ids.push(
+      await insertGiftCard(db, {
+        amount: line.unitPrice * line.quantity,
+        recipientName: d.recipientName,
+        recipientEmail: d.recipientEmail,
+        senderName: d.senderName,
+        message: d.message,
+        expiresAt: new Date(Date.now() + GIFT_CARD_PURCHASE.validityDays * 86_400_000).toISOString(),
+        orderItemId: line.id,
+        orderId: order.id,
+        note: `Bought online, order ${order.orderNumber}`,
+      }),
+    );
+  }
+  return ids;
 }
 
 export async function updateGiftCard(id, input) {

@@ -150,6 +150,29 @@ export default function AdminOrderDetailPage() {
             />
           </Panel>
 
+          {!order.shippingAddress ? (
+            <Panel title="Gift card for" description="Bought online; delivered by email when paid.">
+              <ul className="space-y-3 text-sm">
+                {order.items
+                  .filter((i) => i.giftCard)
+                  .map((i) => (
+                    <li key={i.id} className="leading-6 text-zinc-700">
+                      <span className="font-medium text-zinc-900">{i.giftCard!.recipientName}</span>
+                      <span className="block break-all">{i.giftCard!.recipientEmail}</span>
+                      {i.giftCard!.senderName && <span className="block">From {i.giftCard!.senderName}</span>}
+                      {i.giftCard!.message && <span className="mt-1 block whitespace-pre-line italic text-zinc-600">&ldquo;{i.giftCard!.message}&rdquo;</span>}
+                      {i.giftCard!.id ? (
+                        <Link href={`/admin/gift-cards/${i.giftCard!.id}`} className="mt-1 inline-block font-mono text-brand-800 hover:underline">
+                          {i.giftCard!.code}
+                        </Link>
+                      ) : (
+                        <span className="mt-1 block text-xs text-zinc-500">The card is issued when the payment is confirmed.</span>
+                      )}
+                    </li>
+                  ))}
+              </ul>
+            </Panel>
+          ) : (
           <Panel title="Shipping address">
             <address className="text-sm not-italic leading-6 text-zinc-700">
               <span className="font-medium text-zinc-900">{order.shippingAddress.fullName}</span>
@@ -175,6 +198,7 @@ export default function AdminOrderDetailPage() {
               <span className="text-zinc-500">Phone: {order.shippingAddress.phone}</span>
             </address>
           </Panel>
+          )}
 
           <Panel title="Customer notes">
             {order.notes ? (
