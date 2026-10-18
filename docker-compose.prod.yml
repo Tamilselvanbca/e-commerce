@@ -1,0 +1,66 @@
+# Production stack: PostgreSQL + API + Next.js + Caddy (automatic HTTPS).
+#   1. cp backend/.env.example backend/.env.production   (fill in real values)
+#   2. Set DOMAIN and POSTGRES_PASSWORD in a root .env file (see docs/DEPLOYMENT.md)
+#   3. docker compose -f docker-compose.prod.yml up -d --build
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: shop
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shop -d shop"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env.production
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD}@postgres:5432/shop
+      FRONTEND_URL: https://${DOMAIN:?set DOMAIN}
+    volumes:
+      - uploads:/app/uploads # used when STORAGE_DRIVER=local
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://backend:4000
+    restart: unless-stopped
+    environment:
+      SITE_URL: https://${DOMAIN}
+    depends_on:
+      - backend
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - backend
+
+volumes:
+  pgdata:
+  uploads:
+  caddy_data:
+  caddy_config:

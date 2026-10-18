@@ -1,0 +1,87 @@
+import crypto from 'node:crypto';
+import { config } from '../config.js';
+import { query, queryOne } from '../db/pool.js';
+import { AppError } from '../lib/errors.js';
+import { hmacSha256, safeEqual } from '../lib/util.js';
+import { sendOtpSms } from './sms.js';
+
+const hashCode = (phone, code) => hmacSha256(config.otp.secret, `${phone}:${code}`);
+
+/** Creates a new OTP for `phone` and sends it by SMS. Enforces a resend cooldown. */
+export async function requestOtp(phone, ip) {
+  const latest = await queryOne(
+    `SELECT EXTRACT(EPOCH FROM (now() - created_at)) AS age
+       FROM otp_codes WHERE phone = $1 ORDER BY created_at DESC LIMIT 1`,
+    [phone],
+  );
+  if (latest && latest.age < config.otp.resendSeconds) {
+    const retryAfter = Math.ceil(config.otp.resendSeconds - latest.age);
+    throw new AppError(429, 'OTP_COOLDOWN', `Please wait ${retryAfter}s before requesting a new code`, { retryAfter });
+  }
+
+  // Cap OTP sends per phone per hour to limit SMS cost abuse.
+  const { count } = await queryOne(
+    `SELECT count(*) FROM otp_codes WHERE phone = $1 AND created_at > now() - interval '1 hour'`,
+    [phone],
+  );
+  if (count >= 6) {
+    throw new AppError(429, 'RATE_LIMITED', 'Too many codes requested for this number. Try again in an hour.', { retryAfter: 3600 });
+  }
+
+  const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+  // Invalidate any earlier unused codes so only the newest one works.
+  await query('UPDATE otp_codes SET consumed_at = now() WHERE phone = $1 AND consumed_at IS NULL', [phone]);
+  const { id } = await queryOne(
+    `INSERT INTO otp_codes (phone, code_hash, expires_at, ip)
+     VALUES ($1, $2, now() + make_interval(secs => $3), $4) RETURNING id`,
+    [phone, hashCode(phone, code), config.otp.ttlSeconds, ip],
+  );
+  try {
+    await sendOtpSms(phone, code);
+  } catch (err) {
+    // Don't let a failed delivery trigger the resend cooldown.
+    await query('DELETE FROM otp_codes WHERE id = $1', [id]);
+    throw err;
+  }
+
+  return {
+    phone,
+    expiresIn: config.otp.ttlSeconds,
+    resendIn: config.otp.resendSeconds,
+    ...(config.otp.exposeInResponse ? { devCode: code } : {}),
+  };
+}
+
+/** Housekeeping for the background job: drops expired sessions and old OTP rows. */
+export async function purgeExpiredAuthData() {
+  await query(`DELETE FROM sessions WHERE expires_at < now()`);
+  await query(`DELETE FROM otp_codes WHERE created_at < now() - interval '1 day'`);
+}
+
+/** Verifies the OTP; throws OTP_INVALID / OTP_EXPIRED. Consumes the code on success. */
+export async function verifyOtp(phone, code) {
+  const otp = await queryOne(
+    `SELECT id, code_hash, attempts, expires_at < now() AS expired
+       FROM otp_codes
+      WHERE phone = $1 AND consumed_at IS NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    [phone],
+  );
+  if (!otp || otp.expired || otp.attempts >= config.otp.maxAttempts) {
+    throw new AppError(400, 'OTP_EXPIRED', 'This code has expired. Please request a new one.');
+  }
+  if (!safeEqual(otp.codeHash, hashCode(phone, code))) {
+    const { attempts } = await queryOne(
+      'UPDATE otp_codes SET attempts = attempts + 1 WHERE id = $1 RETURNING attempts',
+      [otp.id],
+    );
+    const attemptsLeft = Math.max(0, config.otp.maxAttempts - attempts);
+    if (attemptsLeft === 0) {
+      throw new AppError(400, 'OTP_EXPIRED', 'Too many incorrect attempts. Please request a new code.');
+    }
+    throw new AppError(400, 'OTP_INVALID', 'Incorrect code. Please try again.', { attemptsLeft });
+  }
+  // Guard against two concurrent verifications of the same code.
+  const consumed = await query('UPDATE otp_codes SET consumed_at = now() WHERE id = $1 AND consumed_at IS NULL RETURNING id', [otp.id]);
+  if (consumed.length === 0) throw new AppError(400, 'OTP_EXPIRED', 'This code has already been used.');
+}

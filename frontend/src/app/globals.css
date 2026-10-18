@@ -1,0 +1,149 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fff8f1;
+  --foreground: #241a14;
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/*
+ * Brand palette for a traditional sweets & savouries store.
+ * The neutral "zinc" scale used across components is warmed to ivory/cocoa
+ * tones, and "brand" (saffron orange) is the primary colour.
+ */
+@theme {
+  --color-zinc-50: #faf6f0;
+  --color-zinc-100: #f3ece2;
+  --color-zinc-200: #e7dccd;
+  --color-zinc-300: #d3c4b0;
+  --color-zinc-400: #a8957e;
+  --color-zinc-500: #7c6955;
+  --color-zinc-600: #5f4f40;
+  --color-zinc-700: #47392e;
+  --color-zinc-800: #31261e;
+  --color-zinc-900: #241a14;
+  --color-zinc-950: #160f0b;
+
+  /* Saffron orange. 700+ carries white text at WCAG AA contrast. */
+  --color-brand-50: #fff7ed;
+  --color-brand-100: #ffedd5;
+  --color-brand-200: #fed7aa;
+  --color-brand-300: #fdba74;
+  --color-brand-400: #fb923c;
+  --color-brand-500: #f97316;
+  --color-brand-600: #ea580c;
+  --color-brand-700: #c2410c;
+  --color-brand-800: #9a3412;
+  --color-brand-900: #7c2d12;
+  --color-brand-950: #431407;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+/* Hide number input spinners (quantity steppers use their own buttons). */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* ---------------------------------------------------------------------------
+ * Kolam animation (components/kolam.tsx)
+ * Dots are placed first, then each line is "drawn" like a stream of rice
+ * flour, then rangoli colours fill in. Timings are set per element inline.
+ * ------------------------------------------------------------------------- */
+@keyframes kolam-dot-in {
+  from {
+    opacity: 0;
+    transform: scale(0);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes kolam-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes kolam-fill-in {
+  from {
+    fill-opacity: 0;
+  }
+  to {
+    fill-opacity: var(--kolam-fill-opacity, 0.35);
+  }
+}
+
+@keyframes kolam-breathe {
+  0%,
+  100% {
+    fill-opacity: var(--kolam-fill-opacity, 0.35);
+  }
+  50% {
+    fill-opacity: calc(var(--kolam-fill-opacity, 0.35) * 0.45);
+  }
+}
+
+@keyframes kolam-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.kolam-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: kolam-dot-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.kolam-line {
+  stroke-dasharray: 1 1;
+  animation: kolam-draw linear both;
+}
+
+.kolam-fill {
+  animation:
+    kolam-fill-in 1.6s ease-out both,
+    kolam-breathe 9s ease-in-out infinite;
+}
+
+.kolam-spin {
+  animation: kolam-spin var(--kolam-spin, 240s) linear infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kolam-dot,
+  .kolam-line,
+  .kolam-fill,
+  .kolam-spin {
+    animation: none !important;
+  }
+  .kolam-line {
+    stroke-dasharray: none;
+  }
+  .kolam-fill {
+    fill-opacity: var(--kolam-fill-opacity, 0.35);
+  }
+}

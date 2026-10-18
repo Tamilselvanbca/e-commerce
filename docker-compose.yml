@@ -1,0 +1,31 @@
+# Local development services: PostgreSQL + Mailpit (catches outgoing email).
+# Start with:  docker compose up -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: shop-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: shop
+      POSTGRES_DB: shop
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - shop_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shop -d shop"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    container_name: shop-mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1025:1025" # SMTP
+      - "127.0.0.1:8025:8025" # Web UI -> http://localhost:8025
+
+volumes:
+  shop_pgdata:

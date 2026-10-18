@@ -1,0 +1,28 @@
+# Caddy obtains and renews the TLS certificate for {$DOMAIN} automatically.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# API, payment webhooks and locally stored images go straight to Express.
+	handle /api/* {
+		reverse_proxy backend:4000
+	}
+	handle /uploads/* {
+		reverse_proxy backend:4000
+	}
+
+	# Everything else is the Next.js storefront and admin panel.
+	handle {
+		reverse_proxy frontend:3000
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}

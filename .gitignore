@@ -1,0 +1,2 @@
+# Production compose secrets (DOMAIN, POSTGRES_PASSWORD)
+.env
