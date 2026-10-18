@@ -2,12 +2,12 @@
 
 import { Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
 import Form from "next/form";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { cn, formatPrice, whatsappUrl } from "@/lib/format";
 import type { Category } from "@/lib/types";
 import { useAuth, useCart, useStoreConfig } from "@/components/providers";
-import { Kolam } from "@/components/kolam";
 import { BagIcon, CloseIcon, MenuIcon, SearchIcon, UserIcon, WhatsAppIcon } from "./icons";
 
 export function StoreLogo({ name, onClick }: { name: string; onClick?: () => void }) {
@@ -16,15 +16,9 @@ export function StoreLogo({ name, onClick }: { name: string; onClick?: () => voi
       href="/"
       onClick={onClick}
       title={name}
-      className="flex min-w-0 shrink-0 items-center gap-2 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+      className="flex shrink-0 items-center rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
     >
-      {/* Logo mark: a small kolam in rice-flour white on saffron. */}
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-brand-700 text-white" aria-hidden="true">
-        <Kolam size={3} shape="diamond" seed={2} mirrorDensity={0} strokeWidth={0.24} still className="size-7" />
-      </span>
-      <span className="max-w-[9rem] truncate whitespace-nowrap text-base font-semibold tracking-tight text-zinc-900 sm:max-w-[14rem] sm:text-lg">
-        {name}
-      </span>
+      <Image src="/logo.png" alt={name} width={1200} height={866} priority className="h-14 w-auto" />
     </Link>
   );
 }
