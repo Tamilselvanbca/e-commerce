@@ -27,7 +27,7 @@ async function recordPayment(order, gateway, gatewayOrderId, raw) {
   await query(
     `INSERT INTO payments (order_id, gateway, gateway_order_id, amount, currency, status, raw)
      VALUES ($1, $2, $3, $4, $5, 'created', $6)`,
-    [order.id, gateway, gatewayOrderId, order.total, order.currency, raw ? JSON.stringify(raw) : null],
+    [order.id, gateway, gatewayOrderId, order.amountDue, order.currency, raw ? JSON.stringify(raw) : null],
   );
   await query('UPDATE orders SET payment_gateway = $2 WHERE id = $1', [order.id, gateway]);
 }
@@ -70,9 +70,14 @@ export function verifyRazorpayWebhook(rawBody, signature) {
 // Stripe
 // ---------------------------------------------------------------------------
 let stripeClient = null;
+let stripeClientKey = null;
 export function stripe() {
   if (!config.stripe.enabled) throw badRequest('Stripe is not configured');
-  stripeClient ??= new Stripe(config.stripe.secretKey, { maxNetworkRetries: 2, timeout: 20_000 });
+  // Recreated when the secret key is changed in Admin → Settings.
+  if (stripeClientKey !== config.stripe.secretKey) {
+    stripeClient = new Stripe(config.stripe.secretKey, { maxNetworkRetries: 2, timeout: 20_000 });
+    stripeClientKey = config.stripe.secretKey;
+  }
   return stripeClient;
 }
 
@@ -84,6 +89,23 @@ export function constructStripeEvent(rawBody, signature) {
 
 function stripeLineItems(order) {
   const currency = order.currency.toLowerCase();
+  // Stripe line items can't be negative, so a discounted or gift-card order is one line for the amount due.
+  if (order.discount > 0 || order.giftCardAmount > 0) {
+    const parts = [
+      order.discount > 0 && `includes ${order.discountCode ?? order.discountTitle ?? 'discount'} -${(order.discount / 100).toFixed(2)}`,
+      order.giftCardAmount > 0 && `gift card -${(order.giftCardAmount / 100).toFixed(2)}`,
+    ].filter(Boolean);
+    return [
+      {
+        quantity: 1,
+        price_data: {
+          currency,
+          unit_amount: order.amountDue,
+          product_data: { name: `Order ${order.orderNumber}`, description: `${order.items.length} item(s), ${parts.join(', ')}` },
+        },
+      },
+    ];
+  }
   const items = order.items.map((i) => ({
     quantity: i.quantity,
     price_data: {
@@ -112,10 +134,11 @@ function stripeLineItems(order) {
  */
 export async function initPayment(order, gateway, user) {
   assertGatewayEnabled(gateway);
+  if (order.amountDue <= 0) throw badRequest('Nothing to pay: this order is covered by its gift card');
 
   if (gateway === 'razorpay') {
     const rzOrder = await razorpayRequest('POST', '/orders', {
-      amount: order.total,
+      amount: order.amountDue,
       currency: order.currency,
       receipt: order.orderNumber,
       notes: { orderId: order.id, orderNumber: order.orderNumber },
@@ -125,7 +148,7 @@ export async function initPayment(order, gateway, user) {
       gateway: 'razorpay',
       keyId: config.razorpay.keyId,
       razorpayOrderId: rzOrder.id,
-      amount: order.total,
+      amount: order.amountDue,
       currency: order.currency,
       name: config.store.name,
       description: `Order ${order.orderNumber}`,
@@ -161,13 +184,13 @@ export async function initPayment(order, gateway, user) {
   // mock
   const mockPaymentId = `mock_${randomToken(9)}`;
   await recordPayment(order, 'mock', mockPaymentId, null);
-  return { gateway: 'mock', mockPaymentId, amount: order.total, currency: order.currency };
+  return { gateway: 'mock', mockPaymentId, amount: order.amountDue, currency: order.currency };
 }
 
 /** Looks up our payment row for a gateway order/session id. */
 export async function findPayment(gateway, gatewayOrderId) {
   const rows = await query(
-    `SELECT p.order_id, p.status, o.order_number, o.user_id, o.total
+    `SELECT p.order_id, p.status, o.order_number, o.user_id, o.amount_due
        FROM payments p JOIN orders o ON o.id = p.order_id
       WHERE p.gateway = $1 AND p.gateway_order_id = $2`,
     [gateway, gatewayOrderId],

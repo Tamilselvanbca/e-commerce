@@ -3,4 +3,5 @@ uploads/
 test-uploads/
 .env
 .env.production
+.env.backup
 *.log

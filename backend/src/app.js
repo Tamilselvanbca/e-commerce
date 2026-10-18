@@ -15,6 +15,7 @@ import bulkRoutes from './routes/bulk.js';
 import cartRoutes from './routes/cart.js';
 import catalogRoutes from './routes/catalog.js';
 import checkoutRoutes from './routes/checkout.js';
+import giftCardRoutes from './routes/gift-cards.js';
 import orderRoutes from './routes/orders.js';
 import paymentRoutes from './routes/payments.js';
 import reviewRoutes from './routes/reviews.js';
@@ -38,10 +39,9 @@ export function createApp() {
   app.use(express.json({ limit: '200kb' }));
   app.use(cookieParser());
 
-  // Locally stored product images (STORAGE_DRIVER=local).
-  if (config.storage.driver === 'local') {
-    app.use('/uploads', express.static(uploadRoot, { maxAge: '30d', immutable: true, index: false, dotfiles: 'deny' }));
-  }
+  // Locally stored images. Always served, so images uploaded before switching
+  // storage to S3 in Admin → Settings keep working.
+  app.use('/uploads', express.static(uploadRoot, { maxAge: '30d', immutable: true, index: false, dotfiles: 'deny' }));
 
   const api = express.Router();
   api.use(apiLimiter);
@@ -56,6 +56,7 @@ export function createApp() {
   api.use('/payments', paymentRoutes);
   api.use('/orders', orderRoutes);
   api.use('/bulk-enquiries', bulkRoutes);
+  api.use('/gift-cards', giftCardRoutes);
   api.use('/admin', adminRoutes);
   app.use('/api', api);
 

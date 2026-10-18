@@ -3,8 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { api, ApiError, errorMessage } from "@/lib/api";
-import { cn, formatDate, GATEWAY_LABELS } from "@/lib/format";
-import type { Gateway, Order, PaymentInit, Shipment, TrackingEvent } from "@/lib/types";
+import { cn, formatDate, formatPrice, GATEWAY_LABELS } from "@/lib/format";
+import type { OnlineGateway, Order, PaymentInit, Shipment, TrackingEvent } from "@/lib/types";
 import { useStoreConfig, useToast } from "@/components/providers";
 import { Button, ButtonLink, Card, EmptyState, Modal } from "@/components/ui";
 import { AddressLines } from "@/components/shop/address-form";
@@ -62,15 +62,14 @@ function OrderView({
   const toast = useToast();
   const { startPayment, paymentUi, processing } = usePaymentFlow({ onIncomplete: () => reload() });
 
-  const enabled = (["razorpay", "stripe", "mock"] as Gateway[]).filter((g) => config.gateways[g]?.enabled);
+  const enabled = (["razorpay", "stripe", "mock"] as OnlineGateway[]).filter((g) => config.gateways[g]?.enabled);
   const [payOpen, setPayOpen] = useState(false);
-  const [gateway, setGateway] = useState<Gateway | null>(null);
+  const [gateway, setGateway] = useState<OnlineGateway | null>(null);
   const [paying, setPaying] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
-  const chosen: Gateway | null =
-    gateway ?? (order.paymentGateway && enabled.includes(order.paymentGateway) ? order.paymentGateway : (enabled[0] ?? null));
+  const chosen: OnlineGateway | null = gateway ?? enabled.find((g) => g === order.paymentGateway) ?? enabled[0] ?? null;
 
   async function pay() {
     if (!chosen) return;
@@ -177,9 +176,12 @@ function OrderView({
                 subtotal={order.subtotal}
                 shippingFee={order.shippingFee}
                 discount={order.discount}
+                discountLabel={order.discountCode ?? order.discountTitle}
                 total={order.total}
+                giftCardAmount={order.giftCardAmount}
+                amountDue={order.amountDue}
                 currency={order.currency}
-                totalLabel={order.paymentStatus === "paid" ? "Total paid" : "Total"}
+                totalLabel={order.paymentStatus === "paid" && !order.giftCardAmount ? "Total paid" : "Total"}
               />
             </div>
           </Card>
@@ -252,6 +254,14 @@ function OrderView({
                 <div className="flex justify-between gap-3">
                   <dt className="text-zinc-500">Method</dt>
                   <dd className="text-right text-zinc-900">{GATEWAY_LABELS[order.paymentGateway] ?? order.paymentGateway}</dd>
+                </div>
+              )}
+              {order.giftCard && order.giftCardAmount > 0 && (
+                <div className="flex justify-between gap-3">
+                  <dt className="text-zinc-500">Gift card</dt>
+                  <dd className="text-right text-zinc-900">
+                    <span className="font-mono">{order.giftCard.code}</span> · {formatPrice(order.giftCardAmount, order.currency)}
+                  </dd>
                 </div>
               )}
               {order.paidAt && (

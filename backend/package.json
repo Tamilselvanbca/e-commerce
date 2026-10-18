@@ -14,7 +14,8 @@
     "migrate": "node --env-file-if-exists=.env src/db/migrate.js",
     "seed": "node --env-file-if-exists=.env src/db/seed.js",
     "seed:demo": "node --env-file-if-exists=.env src/db/seed.js --demo",
-    "db:reset": "node --env-file-if-exists=.env src/db/migrate.js --reset && node --env-file-if-exists=.env src/db/seed.js",
+    "settings:import": "node --env-file-if-exists=.env src/db/import-settings.js",
+    "db:reset":"node --env-file-if-exists=.env src/db/migrate.js --reset && node --env-file-if-exists=.env src/db/seed.js",
     "test": "node --env-file=.env.test --test --test-concurrency=1 \"test/**/*.test.js\""
   },
   "dependencies": {

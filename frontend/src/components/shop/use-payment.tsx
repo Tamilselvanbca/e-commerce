@@ -80,7 +80,7 @@ export function usePaymentFlow(options: { onIncomplete?: (order: Order) => void 
         email: payment.prefill.email ?? undefined,
         contact: payment.prefill.contact,
       },
-      theme: { color: "#18181b" },
+      theme: { color: "#c2410c" },
       handler: async (response) => {
         handled = true;
         setProcessing("Confirming your payment…");
@@ -139,6 +139,10 @@ export function usePaymentFlow(options: { onIncomplete?: (order: Order) => void 
         return;
       case "razorpay":
         await openRazorpay(order, payment);
+        return;
+      case "gift_card":
+        // Already paid in full by the gift card.
+        await succeeded(order);
         return;
     }
   }

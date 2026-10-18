@@ -1,7 +1,8 @@
 // Minimal SQL migration runner. Applies files in ./migrations in name order,
 // each inside its own transaction, and records them in schema_migrations.
 //   npm run migrate            apply pending migrations
-//   npm run migrate -- --reset drop everything and re-apply (development only)
+//   npm run migrate -- --reset drop everything and re-apply (development only);
+//                              Admin → Settings are kept unless keepSettings is false
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,11 +11,17 @@ import { config } from '../config.js';
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 
-export async function migrate({ reset = false, silent = false } = {}) {
+export async function migrate({ reset = false, silent = false, keepSettings = true } = {}) {
   const log = silent ? () => {} : (msg) => console.log(msg);
 
+  let savedSettings = [];
   if (reset) {
     if (config.isProd) throw new Error('Refusing to reset the database in production');
+    // Settings may hold the only copy of API keys, so a reset keeps them.
+    if (keepSettings) {
+      const exists = await pool.query(`SELECT to_regclass('public.settings') AS t`);
+      if (exists.rows[0].t) savedSettings = (await pool.query('SELECT key, value, is_secret FROM settings')).rows;
+    }
     await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
     log('Database reset.');
   }
@@ -43,6 +50,10 @@ export async function migrate({ reset = false, silent = false } = {}) {
       client.release();
     }
   }
+  for (const row of savedSettings) {
+    await pool.query('INSERT INTO settings (key, value, is_secret) VALUES ($1, $2, $3)', [row.key, row.value, row.is_secret]);
+  }
+  if (savedSettings.length) log(`Kept ${savedSettings.length} saved setting(s).`);
   log('Migrations up to date.');
 }
 

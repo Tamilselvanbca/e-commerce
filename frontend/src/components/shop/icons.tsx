@@ -20,6 +20,13 @@ function Svg({ className, children, filled }: IconProps & { children: React.Reac
   );
 }
 
+export const TagIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9-9-9Z" />
+    <circle cx="7.5" cy="7.5" r="1.25" />
+  </Svg>
+);
+
 export const SearchIcon = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="11" cy="11" r="7" />

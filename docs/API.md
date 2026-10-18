@@ -104,7 +104,7 @@ type Address = {
 
 type OrderStatus = 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
 type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
-type Gateway = 'razorpay' | 'stripe' | 'mock';
+type Gateway = 'razorpay' | 'stripe' | 'mock' | 'gift_card'; // gift_card = paid in full by a gift card
 
 type OrderSummary = {
   id: string; orderNumber: string; status: OrderStatus; paymentStatus: PaymentStatus;
@@ -125,7 +125,13 @@ type Shipment = {
 };
 
 type Order = OrderSummary & {
-  currency: string; subtotal: number; shippingFee: number; discount: number;
+  currency: string; subtotal: number; shippingFee: number;
+  discount: number;                 // total = subtotal + shippingFee - discount
+  discountCode: string | null;      // the coupon code, or null for an automatic offer
+  discountTitle: string | null;
+  giftCardAmount: number;           // part of `total` paid by gift card
+  amountDue: number;                // total - giftCardAmount: what the payment gateway charges
+  giftCard: { code: string; id?: string } | null; // customers: "••••-4HNE"; admins: full code + id
   email: string | null; phone: string | null; notes: string | null;
   shippingAddress: Omit<Address, 'id' | 'isDefault'>;
   items: OrderItem[];
@@ -142,7 +148,16 @@ type PaymentInit =
       name: string; description: string;
       prefill: { name: string | null; email: string | null; contact: string } }
   | { gateway: 'stripe'; checkoutUrl: string; sessionId: string }
-  | { gateway: 'mock'; mockPaymentId: string; amount: number; currency: string };
+  | { gateway: 'mock'; mockPaymentId: string; amount: number; currency: string }
+  | { gateway: 'gift_card' };   // already paid; go straight to the success page
+
+type Discount = {
+  id: string; code: string | null; title: string; description: string | null;
+  type: 'percent' | 'fixed' | 'free_shipping';
+  value: number;                // percent: 1-100; fixed: paise; free_shipping: 0
+  maxDiscount: number | null;   // cap (paise) for percent discounts
+  minSubtotal: number; automatic: boolean;
+};
 ```
 
 ---
@@ -271,21 +286,52 @@ Validation: `fullName` 2–80, `phone` 10-digit Indian mobile or E.164, `line1` 
 
 ## Checkout (auth)
 
-### `GET /checkout/summary?addressId=`
-→ `{ "cart": Cart, "subtotal": number, "shippingFee": number, "discount": 0, "total": number,
-     "freeShippingThreshold": number, "international": boolean, "gateways": ["razorpay", "stripe", "mock"] }`
-(`gateways` lists only enabled ones.) Pass `addressId` to price shipping for that address's country;
-without it, domestic shipping is assumed.
+### `GET /checkout/summary?addressId=&couponCode=&giftCardCode=`
+```json
+{
+  "cart": "Cart", "subtotal": 50000, "shippingFee": 4900, "discount": 5000, "total": 49900,
+  "giftCardAmount": 20000, "amountDue": 29900,
+  "appliedDiscount": "Discount & { amount } | null",
+  "coupon": { "code": "SAVE10", "applied": true, "message": null },
+  "offerHint": { "title": "Big basket", "remaining": 100000 },
+  "giftCard": { "code": "K7QM-2XPA-9RTW-4HNE", "applied": true, "balance": 20000, "amount": 20000, "message": null },
+  "freeShippingThreshold": 99900, "international": false, "gateways": ["razorpay", "stripe", "mock"]
+}
+```
+`gateways` lists only enabled ones. `addressId` prices shipping for that address's country (domestic otherwise).
+
+- **Discounts.** The best automatic offer applies without a code. A typed `couponCode` is checked and, if
+  valid, used unless an automatic offer saves more (then `coupon.applied` is false and `message` explains).
+  Invalid codes return `coupon: { applied: false, message }` with a reason (doesn't exist, expired, minimum
+  order, region, usage limit, first order only, already free shipping). `offerHint` names an automatic offer
+  the cart is close to unlocking. One discount per order.
+- **Gift cards.** `giftCardCode` (dashes and case don't matter) pays up to the order total. The card never
+  leaves less than ₹1 to pay online, so `amountDue` is either 0 or at least 100.
 
 ### `POST /checkout`
-Body `{ "addressId": string, "gateway": "razorpay" | "stripe" | "mock", "email"?: string, "notes"?: string }`.
-Validates the cart, **reserves stock**, creates the order (`status: pending`) and the gateway payment.
-Earlier unpaid orders from the same user are cancelled and their stock released.
+Body `{ "addressId": string, "gateway": "razorpay" | "stripe" | "mock" | "gift_card", "email"?: string,
+"notes"?: string, "couponCode"?: string, "giftCardCode"?: string }`.
+Validates the cart, **reserves stock**, re-checks the discount and gift card with their rows locked, creates
+the order (`status: pending`), takes the gift card amount off the card and creates the gateway payment.
+Earlier unpaid orders from the same user are cancelled first, releasing their stock and gift card amount.
 If `email` is given and the user has none, it is saved to the profile.
+
+- When the gift card covers everything (`amountDue` 0), send `gateway: "gift_card"`: the order is marked paid
+  immediately and the response is `{ order, payment: { gateway: "gift_card" } }`.
+- Cancelling an order (customer, store, or payment timeout) puts its gift card amount back on the card.
+
 Response `201 { "order": Order, "payment": PaymentInit }`.
-Errors: `409 CART_EMPTY`, `409 OUT_OF_STOCK` (`details.items: [{ variantId, available }]`), `502 GATEWAY_ERROR`.
+Errors: `409 CART_EMPTY`, `409 OUT_OF_STOCK` (`details.items: [{ variantId, available }]`),
+`409 COUPON_INVALID` (only sent codes that the summary showed as applied), `409 GIFT_CARD_INVALID`,
+`409 GIFT_CARD_INSUFFICIENT` (`gift_card` gateway but the card no longer covers the total), `502 GATEWAY_ERROR`.
 
 The cart is **cleared once payment succeeds**, not at order creation.
+
+## Gift card balance (public)
+
+### `POST /gift-cards/balance` (rate limited)
+Body `{ "code": string }` → `{ "code": "••••-4HNE", "balance": number, "currency": "INR",
+"expiresAt": string | null, "usable": boolean, "message": string | null }`. `404` if no such card.
 
 ---
 
@@ -441,3 +487,52 @@ only, so international orders use the manual shipment endpoint).
 `{ id, name, phone, email, company, message, items, status, adminNotes, createdAt, whatsappUrl }`
 (`whatsappUrl` opens a chat with the customer).
 `PATCH /admin/bulk-enquiries/:id` body `{ "status"?: "new" | "contacted" | "converted" | "closed", "adminNotes"?: string }`.
+
+### Discounts
+`GET /admin/discounts?kind=code|automatic&status=active|inactive&q=` → `{ items: AdminDiscount[] }` where
+`AdminDiscount = Discount & { region, startsAt, endsAt, usageLimit, perCustomerLimit, firstOrderOnly, isActive,
+timesUsed, totalSaved, createdAt, updatedAt }`. `timesUsed` counts orders that aren't cancelled; `totalSaved`
+sums discounts on paid orders.
+`GET /admin/discounts/:id` → `AdminDiscount`.
+`POST /admin/discounts` / `PUT /admin/discounts/:id` body:
+```json
+{
+  "code": "DIWALI10", "title": "Diwali offer", "description": null,
+  "type": "percent", "value": 10, "maxDiscount": 20000, "minSubtotal": 99900,
+  "region": "all", "startsAt": null, "endsAt": "2026-11-05T18:29:59.000Z",
+  "usageLimit": 500, "perCustomerLimit": 1, "firstOrderOnly": false, "isActive": true
+}
+```
+`code: null` makes an automatic offer. Codes are stored upper-case (3–30 of `A-Z 0-9 - _`); a duplicate is
+`409 CODE_TAKEN`. `region` is `all | domestic | international`.
+`PATCH /admin/discounts/:id` body `{ "isActive": boolean }` (quick on/off).
+`DELETE /admin/discounts/:id` → `204`, or `409 DISCOUNT_IN_USE` once an order has used it (switch it off instead).
+
+### Gift cards
+`GET /admin/gift-cards?status=active|used|expired|disabled&q=&page=` → `Paginated<GiftCard> & { summary: { outstanding, cards } }`
+where `GiftCard = { id, code, initialBalance, balance, currency, recipientName, recipientEmail, senderName,
+message, expiresAt, isActive, status, createdAt, updatedAt }` (`code` formatted `XXXX-XXXX-XXXX-XXXX`).
+`GET /admin/gift-cards/:id` → `GiftCard & { transactions: [{ id, kind: "issue" | "redeem" | "refund" | "adjust",
+amount, note, createdAt, orderNumber, createdByName }] }` (negative amounts were spent).
+`POST /admin/gift-cards` body `{ "amount": paise, "recipientName"?, "recipientEmail"?, "senderName"?, "message"?,
+"expiresAt"?: ISO | null, "sendEmail"?: true, "note"? }` → `201 GiftCard & { emailed }`. With `sendEmail` the
+recipient gets the code by email (requires `recipientEmail`).
+`PATCH /admin/gift-cards/:id` body any of `{ isActive, expiresAt, recipientName, recipientEmail, senderName, message }`.
+`POST /admin/gift-cards/:id/adjust` body `{ "amount": paise (+ add / − remove), "note": string }`.
+`POST /admin/gift-cards/:id/email` → `{ sent: true, to }` (re-sends the code to the recipient).
+
+### Settings
+Store settings that override `.env` (store details, shipping, OTP/SMS, payments, email, storage, WhatsApp).
+Saved values apply immediately and are re-read by every API instance within 30 seconds.
+`GET /admin/settings` → `{ groups: [{ id, title, description, fields: SettingField[] }], webhooks: { razorpay, stripe }, server }`
+where each field has `key` (the env name), `label`, `type` (`text | email | tel | url | number | money | select |
+boolean | secret`), display hints, `source` (`admin | env | default`), `value` (raw string; money in paise) and
+`fallback` (what it reverts to). Secrets never leave the server: their `value` is `null` and
+`secret: { set, hint }` shows only the last 4 characters.
+`PUT /admin/settings` body `{ "values": { "STORE_NAME": "My Store", "SMTP_PASS": "…", "WHATSAPP_NUMBER": "", "SHIPPING_FEE": null } }`:
+a string saves the value (`""` clears an optional setting), `null` forgets the saved value and uses `.env` again,
+and a secret left out stays unchanged. Invalid values or combinations (e.g. Twilio Verify without its keys) return
+`400 VALIDATION_ERROR` with `details: [{ path: KEY, message }]` and nothing is saved. Returns the same shape as `GET`.
+`POST /admin/settings/test-email` body `{ "to": email }` → `{ sent, to }`; `400 EMAIL_NOT_CONFIGURED` without SMTP,
+`502 EMAIL_FAILED` with the server's error.
+`GET /admin/settings/twilio-verify-templates` → `{ items: [{ sid, name, channels, text }] }` from the saved Twilio account.

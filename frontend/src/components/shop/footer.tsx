@@ -90,6 +90,11 @@ export function SiteFooter({ categories, year }: { categories: Category[]; year:
                 </Link>
               </li>
               <li>
+                <Link href="/gift-cards" className={link}>
+                  Gift cards
+                </Link>
+              </li>
+              <li>
                 <Link href="/contact" className={link}>
                   Contact us
                 </Link>

@@ -200,7 +200,10 @@ export function SuccessView({ orderNumber, sessionId }: { orderNumber: string | 
               subtotal={order.subtotal}
               shippingFee={order.shippingFee}
               discount={order.discount}
+              discountLabel={order.discountCode ?? order.discountTitle}
               total={order.total}
+              giftCardAmount={order.giftCardAmount}
+              amountDue={order.amountDue}
               currency={order.currency}
             />
           </div>

@@ -185,7 +185,9 @@ export type AddressInput = Omit<Address, "id" | "isDefault"> & { isDefault?: boo
 
 export type OrderStatus = "pending" | "confirmed" | "processing" | "shipped" | "delivered" | "cancelled";
 export type PaymentStatus = "pending" | "paid" | "failed" | "refunded";
-export type Gateway = "razorpay" | "stripe" | "mock";
+/** "gift_card" = paid in full by a gift card (no online payment). */
+export type Gateway = "razorpay" | "stripe" | "mock" | "gift_card";
+export type OnlineGateway = Exclude<Gateway, "gift_card">;
 
 export type OrderSummary = {
   id: string;
@@ -228,6 +230,13 @@ export type Order = OrderSummary & {
   subtotal: number;
   shippingFee: number;
   discount: number;
+  discountCode: string | null;
+  discountTitle: string | null;
+  /** Paid by gift card; `amountDue` is the rest, charged online. */
+  giftCardAmount: number;
+  amountDue: number;
+  /** Customers see a masked code ("••••-4HNE"); admins see the full code and id. */
+  giftCard: { code: string; id?: string } | null;
   email: string | null;
   phone: string | null;
   notes: string | null;
@@ -245,7 +254,7 @@ export type Order = OrderSummary & {
 export type AdminOrder = Order & {
   customer: User;
   payments: {
-    gateway: Gateway;
+    gateway: OnlineGateway;
     gatewayOrderId: string;
     gatewayPaymentId: string | null;
     amount: number;
@@ -267,7 +276,23 @@ export type PaymentInit =
       prefill: { name: string | null; email: string | null; contact: string };
     }
   | { gateway: "stripe"; checkoutUrl: string; sessionId: string }
-  | { gateway: "mock"; mockPaymentId: string; amount: number; currency: string };
+  | { gateway: "mock"; mockPaymentId: string; amount: number; currency: string }
+  | { gateway: "gift_card" };
+
+export type DiscountType = "percent" | "fixed" | "free_shipping";
+
+/** A discount as customers see it. `value` is a percentage or paise. */
+export type PublicDiscount = {
+  id: string;
+  code: string | null;
+  title: string;
+  description: string | null;
+  type: DiscountType;
+  value: number;
+  maxDiscount: number | null;
+  minSubtotal: number;
+  automatic: boolean;
+};
 
 export type CheckoutSummary = {
   cart: Cart;
@@ -275,11 +300,96 @@ export type CheckoutSummary = {
   shippingFee: number;
   discount: number;
   total: number;
+  giftCardAmount: number;
+  /** What the payment gateway charges (total minus gift card). */
+  amountDue: number;
+  appliedDiscount: (PublicDiscount & { amount: number }) | null;
+  /** Result for the code the customer typed. */
+  coupon: { code: string; applied: boolean; message: string | null } | null;
+  /** An automatic offer the cart is close to unlocking. */
+  offerHint: { title: string; remaining: number } | null;
+  giftCard: { code: string; applied: boolean; balance: number | null; amount: number; message: string | null } | null;
   /** 0 = no free shipping for this destination. */
   freeShippingThreshold: number;
   /** True when the selected address is outside India. */
   international: boolean;
-  gateways: Gateway[];
+  gateways: OnlineGateway[];
+};
+
+export type AdminDiscount = PublicDiscount & {
+  region: "all" | "domestic" | "international";
+  startsAt: string | null;
+  endsAt: string | null;
+  usageLimit: number | null;
+  perCustomerLimit: number | null;
+  firstOrderOnly: boolean;
+  isActive: boolean;
+  timesUsed: number;
+  /** Paise saved on paid orders. */
+  totalSaved: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DiscountInput = {
+  code: string | null;
+  title: string;
+  description: string | null;
+  type: DiscountType;
+  value: number;
+  maxDiscount: number | null;
+  minSubtotal: number;
+  region: AdminDiscount["region"];
+  startsAt: string | null;
+  endsAt: string | null;
+  usageLimit: number | null;
+  perCustomerLimit: number | null;
+  firstOrderOnly: boolean;
+  isActive: boolean;
+};
+
+export type GiftCardStatus = "active" | "used" | "expired" | "disabled";
+
+export type GiftCard = {
+  id: string;
+  /** Formatted, e.g. K7QM-2XPA-9RTW-4HNE. */
+  code: string;
+  initialBalance: number;
+  balance: number;
+  currency: string;
+  recipientName: string | null;
+  recipientEmail: string | null;
+  senderName: string | null;
+  message: string | null;
+  expiresAt: string | null;
+  isActive: boolean;
+  status: GiftCardStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type GiftCardTransaction = {
+  id: number;
+  kind: "issue" | "redeem" | "refund" | "adjust";
+  /** Negative = spent. */
+  amount: number;
+  note: string | null;
+  createdAt: string;
+  orderNumber: string | null;
+  createdByName: string | null;
+};
+
+export type GiftCardDetail = GiftCard & { transactions: GiftCardTransaction[] };
+
+export type GiftCardList = Paginated<GiftCard> & { summary: { outstanding: number; cards: number } };
+
+export type GiftCardBalance = {
+  code: string;
+  balance: number;
+  currency: string;
+  expiresAt: string | null;
+  usable: boolean;
+  message: string | null;
 };
 
 export type TrackingEvent = { date: string; status: string; location: string | null; activity: string | null };
@@ -350,6 +460,53 @@ export type AdminUserRow = User & {
   totalSpent: number;
   lastLoginAt: string | null;
 };
+
+export type SettingSource = "admin" | "env" | "default";
+
+export type SettingField = {
+  /** Environment variable name, e.g. STORE_NAME. */
+  key: string;
+  label: string;
+  type: "text" | "email" | "tel" | "url" | "number" | "money" | "select" | "boolean" | "secret";
+  help?: string;
+  placeholder?: string;
+  /** Starts a sub-heading within the group. */
+  section?: string;
+  options?: { value: string; label: string }[];
+  min?: number;
+  max?: number;
+  step?: number;
+  prefix?: string;
+  suffix?: string;
+  required?: boolean;
+  checkboxLabel?: string;
+  lookup?: "twilioVerifyTemplates";
+  webhook?: "razorpay" | "stripe";
+  source: SettingSource;
+  /** Raw value (money in paise, booleans "true"/"false"); always null for secrets. */
+  value: string | null;
+  secret?: { set: boolean; hint: string | null };
+  /** What the setting falls back to when the saved value is removed. */
+  fallback: { value: string | null; set?: boolean };
+};
+
+export type SettingsGroup = { id: string; title: string; description?: string; fields: SettingField[] };
+
+export type AdminSettings = {
+  groups: SettingsGroup[];
+  webhooks: { razorpay: string; stripe: string };
+  server: {
+    environment: string;
+    frontendUrl: string;
+    currency: string;
+    mockPayments: boolean;
+    otpCodesInResponse: boolean;
+    adminPhones: number;
+    dedicatedEncryptionKey: boolean;
+  };
+};
+
+export type VerifyTemplate = { sid: string; name: string; channels: string[]; text: string | null };
 
 export type Dashboard = {
   range: { from: string; to: string; days: number };

@@ -16,6 +16,10 @@ export const GATEWAY_OPTIONS: Record<Gateway, { title: string; description: stri
     title: "Test payment (development only)",
     description: "Simulate a successful or failed payment without real money.",
   },
+  gift_card: {
+    title: "Gift card",
+    description: "Your gift card covers the whole order.",
+  },
 };
 
 export function OrderStatusBadge({ status }: { status: OrderStatus }) {
@@ -85,6 +89,9 @@ export function Totals({
   shippingFee,
   discount,
   total,
+  discountLabel,
+  giftCardAmount = 0,
+  amountDue,
   currency,
   totalLabel = "Total",
 }: {
@@ -92,29 +99,48 @@ export function Totals({
   shippingFee: number;
   discount: number;
   total: number;
+  /** e.g. the coupon code or offer name. */
+  discountLabel?: string | null;
+  giftCardAmount?: number;
+  /** Left to pay after the gift card; shown when a gift card is used. */
+  amountDue?: number;
   currency?: string;
   totalLabel?: string;
 }) {
   return (
     <dl className="space-y-2.5 text-sm">
-      <div className="flex justify-between">
+      <div className="flex justify-between gap-4">
         <dt className="text-zinc-600">Subtotal</dt>
         <dd className="text-zinc-900">{formatPrice(subtotal, currency)}</dd>
       </div>
-      <div className="flex justify-between">
+      <div className="flex justify-between gap-4">
         <dt className="text-zinc-600">Shipping</dt>
         <dd className="text-zinc-900">{shippingFee === 0 ? "Free" : formatPrice(shippingFee, currency)}</dd>
       </div>
       {discount > 0 && (
-        <div className="flex justify-between">
-          <dt className="text-zinc-600">Discount</dt>
-          <dd className="text-emerald-700">−{formatPrice(discount, currency)}</dd>
+        <div className="flex justify-between gap-4">
+          <dt className="min-w-0 text-zinc-600">
+            Discount{discountLabel && <span className="ml-1 break-all font-medium text-emerald-800">({discountLabel})</span>}
+          </dt>
+          <dd className="shrink-0 text-emerald-700">−{formatPrice(discount, currency)}</dd>
         </div>
       )}
-      <div className="flex justify-between border-t border-zinc-200 pt-3 text-base">
+      <div className="flex justify-between gap-4 border-t border-zinc-200 pt-3 text-base">
         <dt className="font-semibold text-zinc-900">{totalLabel}</dt>
         <dd className="font-semibold text-zinc-900">{formatPrice(total, currency)}</dd>
       </div>
+      {giftCardAmount > 0 && (
+        <>
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-600">Gift card</dt>
+            <dd className="text-emerald-700">−{formatPrice(giftCardAmount, currency)}</dd>
+          </div>
+          <div className="flex justify-between gap-4 text-base">
+            <dt className="font-semibold text-zinc-900">{amountDue === 0 ? "Left to pay" : "To pay now"}</dt>
+            <dd className="font-semibold text-zinc-900">{formatPrice(amountDue ?? total - giftCardAmount, currency)}</dd>
+          </div>
+        </>
+      )}
     </dl>
   );
 }

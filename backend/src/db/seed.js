@@ -9,6 +9,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
 import { generateOrderNumber, normalizePhone, slugify } from '../lib/util.js';
+import { loadSettings } from '../services/settings.js';
 import { uploadRoot } from '../services/storage.js';
 import { pool, query, queryOne, transaction } from './pool.js';
 import { packArt, productArt } from './seed-art.js';
@@ -535,6 +536,8 @@ async function seedDemoReviews() {
 }
 
 try {
+  // Use the store name etc. saved in Admin → Settings (falls back to .env).
+  await loadSettings().catch((err) => console.warn(`Using .env settings only: ${err.message}`));
   await seedAdmins();
   await seedCatalog();
   if (DEMO) {

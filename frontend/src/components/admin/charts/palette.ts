@@ -21,4 +21,6 @@ export const GATEWAY_COLORS = {
   razorpay: VIZ.series1,
   stripe: VIZ.series2,
   mock: VIZ.series3,
+  // Orders paid entirely by gift card: neutral, labelled in the legend and table.
+  gift_card: "#a1a1aa",
 } as const;
