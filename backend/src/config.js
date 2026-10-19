@@ -25,9 +25,16 @@ const schema = z.object({
     .default('loopback, linklocal, uniquelocal')
     .transform((v) => (/^\d+$/.test(v) ? Number(v) : v === 'false' ? false : v)),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  // pg = normal TCP connection; neon = Neon's driver over WebSockets on port 443, for hosts
+  // that only allow HTTP(S) out (GoDaddy Node.js Hosting). Default: neon for *.neon.tech URLs.
+  DATABASE_DRIVER: z.enum(['pg', 'neon']).optional(),
+  // Testing only: route the neon driver through a local wsproxy, e.g. localhost:5435/v1
+  DATABASE_WS_PROXY: optionalString,
   FRONTEND_URL: z.string().url().default('http://localhost:3000'),
   CORS_ORIGINS: csv,
   LOG_LEVEL: z.string().default('info'),
+  // Header carrying the visitor's IP when a CDN sits in front (e.g. cf-connecting-ip).
+  CLIENT_IP_HEADER: optionalString,
 
   // Store
   STORE_NAME: z.string().default('My Store'),
@@ -76,7 +83,9 @@ const schema = z.object({
   STRIPE_WEBHOOK_SECRET: optionalString,
   ENABLE_MOCK_PAYMENTS: bool,
 
-  // Email
+  // Email: smtp (Nodemailer, settings below) or godaddy (the GoDaddy Node.js Hosting
+  // mail gateway on 127.0.0.1:2525, where outbound SMTP is blocked).
+  EMAIL_TRANSPORT: z.enum(['smtp', 'godaddy']).default('smtp'),
   SMTP_HOST: optionalString,
   SMTP_PORT: z.coerce.number().int().default(587),
   SMTP_SECURE: bool,
@@ -152,6 +161,14 @@ function crossFieldIssues(env, level) {
   return issues;
 }
 
+function isNeonUrl(url) {
+  try {
+    return new URL(url).hostname.endsWith('.neon.tech');
+  } catch {
+    return false;
+  }
+}
+
 /** Parses and checks a set of raw (string) variables. `level` is base, boot or strict (see above). */
 export function checkEnv(source, { level = 'boot' } = {}) {
   const parsed = schema.safeParse(source);
@@ -177,9 +194,14 @@ function build(source, level = 'boot') {
     port: env.PORT,
     trustProxy: env.TRUST_PROXY,
     databaseUrl: env.DATABASE_URL,
+    database: {
+      driver: env.DATABASE_DRIVER ?? (isNeonUrl(env.DATABASE_URL) ? 'neon' : 'pg'),
+      wsProxy: env.DATABASE_WS_PROXY,
+    },
     frontendUrl: env.FRONTEND_URL.replace(/\/$/, ''),
     corsOrigins: [env.FRONTEND_URL.replace(/\/$/, ''), ...env.CORS_ORIGINS],
     logLevel: env.LOG_LEVEL,
+    clientIpHeader: env.CLIENT_IP_HEADER?.toLowerCase(),
 
     store: {
       name: env.STORE_NAME,
@@ -245,6 +267,7 @@ function build(source, level = 'boot') {
     mockPayments: { enabled: env.ENABLE_MOCK_PAYMENTS && !isProd },
 
     email: {
+      transport: env.EMAIL_TRANSPORT,
       smtp: env.SMTP_HOST
         ? {
             host: env.SMTP_HOST,

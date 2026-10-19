@@ -7,7 +7,7 @@ import { config } from './config.js';
 import { logger } from './lib/logger.js';
 import { loadUser } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
-import { apiLimiter, originCheck } from './middleware/security.js';
+import { apiLimiter, clientIpFromHeader, originCheck } from './middleware/security.js';
 import addressRoutes from './routes/addresses.js';
 import adminRoutes from './routes/admin/index.js';
 import authRoutes from './routes/auth.js';
@@ -26,6 +26,7 @@ export function createApp() {
   const app = express();
   app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
+  app.use(clientIpFromHeader);
 
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(cors({ origin: config.corsOrigins, credentials: true }));

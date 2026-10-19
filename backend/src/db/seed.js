@@ -5,8 +5,10 @@
 //   npm run seed -- --force      replace the catalog
 //   npm run seed -- --demo       also create demo customers, orders and reviews (dashboard data)
 //   npm run db:reset             wipe the whole database, then seed the catalog
+// `seedStore()` is also called on first start by hosts without shell access.
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { generateOrderNumber, normalizePhone, slugify } from '../lib/util.js';
 import { loadSettings } from '../services/settings.js';
@@ -14,9 +16,9 @@ import { uploadRoot } from '../services/storage.js';
 import { pool, query, queryOne, transaction } from './pool.js';
 import { packArt, productArt } from './seed-art.js';
 
-const args = new Set(process.argv.slice(2));
-const FORCE = args.has('--force');
-const DEMO = args.has('--demo');
+// Set by seedStore() from its options.
+let FORCE = false;
+let DEMO = false;
 const DEMO_ORDERS = 60;
 
 // Deterministic pseudo-random numbers so every seed produces the same catalog.
@@ -535,18 +537,32 @@ async function seedDemoReviews() {
   console.log(`Seeded ${n} demo reviews.`);
 }
 
-try {
-  // Use the store name etc. saved in Admin → Settings (falls back to .env).
-  await loadSettings().catch((err) => console.warn(`Using .env settings only: ${err.message}`));
+/**
+ * Admin users from ADMIN_PHONES plus the starter catalogue (skipped when
+ * products exist unless `force`). `demo` adds fake customers, orders and
+ * reviews for dashboards; never use it on a live store.
+ */
+export async function seedStore({ force = false, demo = false } = {}) {
+  FORCE = force;
+  DEMO = demo;
   await seedAdmins();
   await seedCatalog();
   if (DEMO) {
     await seedDemoOrders();
     await seedDemoReviews();
   }
-} catch (err) {
-  console.error(err);
-  process.exitCode = 1;
-} finally {
-  await pool.end();
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  const args = new Set(process.argv.slice(2));
+  try {
+    // Use the store name etc. saved in Admin → Settings (falls back to .env).
+    await loadSettings().catch((err) => console.warn(`Using .env settings only: ${err.message}`));
+    await seedStore({ force: args.has('--force'), demo: args.has('--demo') });
+  } catch (err) {
+    console.error(err);
+    process.exitCode = 1;
+  } finally {
+    await pool.end();
+  }
 }

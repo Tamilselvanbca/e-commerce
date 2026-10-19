@@ -519,6 +519,8 @@ export type AdminSettings = {
     otpCodesInResponse: boolean;
     adminPhones: number;
     dedicatedEncryptionKey: boolean;
+    /** "godaddy" = GoDaddy's mail gateway; the SMTP settings are then not used. */
+    emailTransport: "smtp" | "godaddy";
   };
 };
 

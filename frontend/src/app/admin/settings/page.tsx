@@ -146,6 +146,12 @@ function GroupForm({
             Customers can &ldquo;pay&rdquo; without being charged (ENABLE_MOCK_PAYMENTS in .env). Turn this off on the server before going live.
           </InlineAlert>
         )}
+        {group.id === "email" && settings.server.emailTransport === "godaddy" && (
+          <InlineAlert tone="info" className="mb-5" title="Sent through GoDaddy's mail service">
+            On GoDaddy Node.js Hosting, emails go through GoDaddy&apos;s built-in mail service, which picks the sender
+            address; customers&apos; replies go to the support email. The SMTP fields below aren&apos;t used.
+          </InlineAlert>
+        )}
         {group.id === "login" && settings.server.otpCodesInResponse && (
           <InlineAlert tone="warning" className="mb-5" title="Development mode">
             Login codes are shown on screen (OTP_EXPOSE_IN_RESPONSE in .env). This is ignored for Twilio Verify and must be off in production.
@@ -275,6 +281,7 @@ function ServerPanel({ server }: { server: AdminSettings["server"] }) {
           { label: "Environment", value: <span className="capitalize">{server.environment}</span> },
           { label: "Store address", value: <span className="break-all">{server.frontendUrl}</span> },
           { label: "Currency", value: server.currency },
+          { label: "Email via", value: server.emailTransport === "godaddy" ? "GoDaddy mail service" : "SMTP (settings above)" },
           { label: "Admin phones", value: `${server.adminPhones} number${server.adminPhones === 1 ? "" : "s"} in ADMIN_PHONES` },
           { label: "Test payments", value: onOff(server.mockPayments) },
           {

@@ -1,9 +1,12 @@
-// Transactional email via Nodemailer. Works with any SMTP server, including
-// SendGrid (host smtp.sendgrid.net, user "apikey", pass = API key) and Amazon SES.
-// Without SMTP_HOST, messages are logged instead of sent.
-import nodemailer from 'nodemailer';
+// Transactional email. Two transports (EMAIL_TRANSPORT):
+// - smtp: Nodemailer with any SMTP server, e.g. SendGrid (host smtp.sendgrid.net,
+//   user "apikey", pass = API key) or Amazon SES. Without SMTP_HOST, messages are
+//   logged instead of sent.
+// - godaddy: the GoDaddy Node.js Hosting mail gateway (outbound SMTP is blocked
+//   there). The gateway picks the sender address; replies go to the support email.
 import { config } from '../config.js';
 import { AppError } from '../lib/errors.js';
+import { sendEmail as sendViaGoDaddy } from '../lib/godaddy-email.js';
 import { logger } from '../lib/logger.js';
 import { formatMoney } from '../lib/util.js';
 
@@ -11,9 +14,11 @@ import { formatMoney } from '../lib/util.js';
 let transport = null;
 let transportFor = null;
 
-function getTransport() {
+async function getTransport() {
   const key = JSON.stringify(config.email.smtp);
   if (key !== transportFor) {
+    // Loaded on demand so hosts without SMTP never import it.
+    const { default: nodemailer } = await import('nodemailer');
     transport?.close?.();
     transport = config.email.smtp
       ? nodemailer.createTransport(config.email.smtp)
@@ -23,12 +28,30 @@ function getTransport() {
   return transport;
 }
 
+/** Sends one message with the configured transport; throws on failure. Returns the message id. */
+async function deliver({ to, subject, html, text }) {
+  if (config.email.transport === 'godaddy') {
+    const { messageId } = await sendViaGoDaddy({
+      to,
+      subject,
+      html,
+      text,
+      ...(config.store.supportEmail ? { replyTo: config.store.supportEmail } : {}),
+    });
+    return messageId;
+  }
+  const info = await (await getTransport()).sendMail({ from: config.email.from, to, subject, html, text });
+  return info.messageId;
+}
+
+const canSend = () => config.email.transport === 'godaddy' || Boolean(config.email.smtp);
+
 export async function sendEmail({ to, subject, html, text }) {
   if (!to) return;
   try {
-    const info = await getTransport().sendMail({ from: config.email.from, to, subject, html, text });
-    if (!config.email.smtp) logger.info({ to, subject }, '[email] SMTP not configured; message logged only');
-    else logger.info({ to, subject, messageId: info.messageId }, '[email] sent');
+    const messageId = await deliver({ to, subject, html, text });
+    if (!canSend()) logger.info({ to, subject }, '[email] SMTP not configured; message logged only');
+    else logger.info({ to, subject, messageId }, '[email] sent');
   } catch (err) {
     // Email failures must never break the request that triggered them.
     logger.error({ err, to, subject }, '[email] failed to send');
@@ -45,12 +68,11 @@ export function queueEmail(message) {
  * failures, so the admin can see why mail isn't going out.
  */
 export async function sendTestEmail(to) {
-  if (!config.email.smtp) {
+  if (!canSend()) {
     throw new AppError(400, 'EMAIL_NOT_CONFIGURED', 'No SMTP server is set, so emails are only written to the server log.');
   }
   try {
-    await getTransport().sendMail({
-      from: config.email.from,
+    await deliver({
       to,
       subject: `Test email from ${config.store.name}`,
       html: layout('Your email settings work', '<p style="font-size:14px">Order confirmations and alerts will be sent from this address.</p>'),
@@ -58,7 +80,9 @@ export async function sendTestEmail(to) {
     });
   } catch (err) {
     logger.warn({ err, to }, '[email] test email failed');
-    throw new AppError(502, 'EMAIL_FAILED', `The email server rejected the message: ${err.message}`);
+    // The GoDaddy gateway's messages can list the account's domains; keep them in the log.
+    const reason = config.email.transport === 'godaddy' ? 'check the server log for details' : err.message;
+    throw new AppError(502, 'EMAIL_FAILED', `The email server rejected the message: ${reason}`);
   }
 }
 

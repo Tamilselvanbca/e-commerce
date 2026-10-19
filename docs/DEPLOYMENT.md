@@ -4,6 +4,39 @@ This guide deploys the whole stack (PostgreSQL, API, Next.js, HTTPS reverse prox
 server with Docker Compose. A 2 vCPU / 4 GB RAM VM (AWS EC2 or Lightsail in `ap-south-1`, or any VPS)
 is enough for a typical store.
 
+Two ways to host the store:
+
+- **GoDaddy Node.js Hosting** (managed, no server to maintain): see the next section.
+- **Your own Linux server (VPS)** with Docker Compose: see *Quick start* and sections 1–10.
+
+## GoDaddy Node.js Hosting
+
+GoDaddy's platform runs one Node.js app per upload, allows only HTTP/HTTPS out, offers only MySQL and blocks
+SMTP. `deploy/godaddy/build.mjs` turns this repo into a compatible single app:
+
+- website and API in one process (`server.js`) on `process.env.PORT`;
+- PostgreSQL on [Neon](https://neon.tech) through Neon's WebSocket driver over port 443 (picked automatically for
+  `*.neon.tech` URLs; `DATABASE_DRIVER=neon|pg` overrides);
+- email through GoDaddy's mail gateway (`EMAIL_TRANSPORT=godaddy`), images in `public/assets/uploads`
+  (kept between deployments), visitor IPs from the CDN's `cf-connecting-ip` header;
+- build tools as regular dependencies, a lockfile and `.npmrc` for the public registry. The bundle passes
+  GoDaddy's validator (`validate-paas.mjs --strict`).
+
+```bash
+node deploy/godaddy/build.mjs --push                        # dist/godaddy/ + dist/norukutheeni-godaddy.zip, branch `godaddy`
+node --env-file=backend/.env deploy/godaddy/make-env.mjs    # dist/godaddy.env from your current settings (secrets; not committed)
+```
+
+Then:
+1. Create a free Neon project in the region nearest the GoDaddy app (Europe → Frankfurt, North America → US East)
+   and put its connection string in `DATABASE_URL`.
+2. In Node.js Hosting create the app from the `godaddy` branch (Git sync) or the zip, add the variables from
+   `dist/godaddy.env`, and deploy. The first start creates the tables and the starter catalogue.
+3. Check the preview, publish, connect the domain, log in with an `ADMIN_PHONES` number and review **Admin → Settings**.
+
+Full details: [deploy/godaddy/README.md](../deploy/godaddy/README.md). After code changes, run the build again and
+update the app in Node.js Hosting.
+
 ## Quick start (one command)
 
 On a fresh Ubuntu 22.04 / 24.04 server (at least 2 GB RAM), as root:

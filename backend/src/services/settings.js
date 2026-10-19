@@ -115,6 +115,20 @@ export function startSettingsSync(intervalMs = 30_000) {
   return () => clearInterval(timer);
 }
 
+/**
+ * Raw current values of every admin-editable setting (saved value, else the
+ * environment), secrets decrypted. For server-side tooling only, e.g. writing
+ * a new host's environment file; never send this to a browser.
+ */
+export function currentRawValues() {
+  const out = {};
+  for (const key of SETTING_FIELDS.keys()) {
+    const value = key in overrides ? overrides[key] : process.env[key]?.trim();
+    if (value) out[key] = value;
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Describing
 // ---------------------------------------------------------------------------
@@ -171,6 +185,7 @@ export function describeSettings() {
       otpCodesInResponse: config.otp.exposeInResponse,
       adminPhones: config.auth.adminPhones.length,
       dedicatedEncryptionKey: config.settings.dedicatedKey,
+      emailTransport: config.email.transport,
     },
   };
 }
