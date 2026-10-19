@@ -1,0 +1,42 @@
+{
+  "name": "noruku-theeni-store",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sweets & snacks store (website + API) for GoDaddy Node.js Hosting. Built from 315013b.",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "next build",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1146.0",
+    "@neondatabase/serverless": "^1.2.0",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "multer": "^2.4.0",
+    "next": "16.3.8",
+    "nodemailer": "^10.0.13",
+    "pg": "^8.23.1",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "stripe": "^23.0.0",
+    "tailwind-merge": "^3.7.0",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "ws": "^8.22.0",
+    "zod": "^4.6.5"
+  }
+}
