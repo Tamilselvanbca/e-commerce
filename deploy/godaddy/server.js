@@ -21,40 +21,58 @@ process.env.UPLOAD_DIR ??= path.join(root, 'public', 'assets', 'uploads');
 process.env.BACKEND_URL = `http://127.0.0.1:${port}`;
 process.env.SITE_URL ??= process.env.FRONTEND_URL;
 
-// Imported after the defaults above: the API reads its configuration on import.
-const [{ createApp }, { bootstrap }, { pool }, { logger }, { default: next }] = await Promise.all([
-  import('./server/app.js'),
-  import('./server/bootstrap.js'),
-  import('./server/db/pool.js'),
-  import('./server/lib/logger.js'),
-  import('next'),
-]);
+// Open the port straight away: the first start (database tables, starter
+// catalogue) can take a while over a remote database, and the platform
+// expects the app to answer. Until it's ready, every request gets a 503.
+const STARTING_PAGE = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="10"><title>Starting…</title>
+<body style="font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;color:#3f3f46">
+<p>The store is starting up. This page refreshes by itself.</p></body>`;
+let handle = (req, res) => {
+  res.writeHead(503, { 'content-type': 'text/html; charset=utf-8', 'retry-after': '10', 'cache-control': 'no-store' });
+  res.end(STARTING_PAGE);
+};
+const server = http.createServer((req, res) => handle(req, res));
+server.listen(port, '0.0.0.0', () => console.log(`Listening on port ${port}; starting the store…`));
 
-// Migrations, saved settings, starter catalogue on an empty database, background jobs.
-const stop = await bootstrap({ seedIfEmpty: true });
+let stop = () => {};
+try {
+  // Imported after the defaults above: the API reads its configuration on import.
+  const [{ createApp }, { bootstrap }, { logger }, { default: next }] = await Promise.all([
+    import('./server/app.js'),
+    import('./server/bootstrap.js'),
+    import('./server/lib/logger.js'),
+    import('next'),
+  ]);
 
-const web = next({ dev: false, dir: root, hostname: '0.0.0.0', port });
-const handleWeb = web.getRequestHandler();
-await web.prepare();
-const api = createApp();
+  // Migrations, saved settings, starter catalogue on an empty database, background jobs.
+  stop = await bootstrap({ seedIfEmpty: true });
 
-const isApiPath = (url) => /^\/(api|uploads)(\/|\?|$)/.test(url);
-const server = http.createServer((req, res) => {
-  if (isApiPath(req.url ?? '/')) api(req, res);
-  else handleWeb(req, res);
-});
+  const web = next({ dev: false, dir: root, hostname: '0.0.0.0', port });
+  const handleWeb = web.getRequestHandler();
+  await web.prepare();
+  const api = createApp();
 
-server.listen(port, '0.0.0.0', () => {
-  logger.info({ port, env: process.env.NODE_ENV }, `Store listening on port ${port}`);
-});
+  const isApiPath = (url) => /^\/(api|uploads)(\/|\?|$)/.test(url);
+  handle = (req, res) => (isApiPath(req.url ?? '/') ? api(req, res) : handleWeb(req, res));
+  logger.info({ port, env: process.env.NODE_ENV }, 'Store ready');
+} catch (err) {
+  // Plain console output so it shows in the runtime logs even if logging never started.
+  // Configuration errors name the missing variables (never their values).
+  console.error(`Startup failed: ${err?.message ?? err}`);
+  if (err?.stack) console.error(err.stack);
+  process.exit(1);
+}
 
-const shutdown = (signal) => {
-  logger.info(`${signal} received, shutting down`);
+const shutdown = async (signal) => {
+  console.log(`${signal} received, shutting down`);
   stop();
-  server.close(() => {
-    pool.end().finally(() => process.exit(0));
-  });
   setTimeout(() => process.exit(1), 10_000).unref();
+  server.close(async () => {
+    const { pool } = await import('./server/db/pool.js');
+    await pool.end().catch(() => {});
+    process.exit(0);
+  });
 };
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
