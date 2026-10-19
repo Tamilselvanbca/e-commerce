@@ -42,6 +42,12 @@ async function buildBundle() {
   for (const name of WEBSITE_FILES) {
     await cp(path.join(repo, 'frontend', name), path.join(out, name), { recursive: true });
   }
+  // server.js runs Next in-process, so the Docker-only standalone output is not needed
+  // (and makes Next log a misleading "next start does not work" warning).
+  const nextConfig = path.join(out, 'next.config.ts');
+  const withoutStandalone = (await readFile(nextConfig, 'utf8')).replace(/^\s*output: "standalone",\r?\n/m, '');
+  if (withoutStandalone.includes('standalone')) throw new Error('next.config.ts: could not remove output: "standalone"');
+  await writeFile(nextConfig, withoutStandalone);
   await cp(path.join(repo, 'backend', 'src'), path.join(out, 'server'), { recursive: true });
   await cp(path.join(here, 'server.js'), path.join(out, 'server.js'));
   await cp(path.join(here, 'README.md'), path.join(out, 'README.md'));
