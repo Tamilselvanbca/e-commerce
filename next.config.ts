@@ -6,7 +6,6 @@ import type { NextConfig } from "next";
 const BACKEND_URL = (process.env.BACKEND_URL ?? "http://localhost:4000").replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
-  output: "standalone",
   poweredByHeader: false,
   async rewrites() {
     return [
