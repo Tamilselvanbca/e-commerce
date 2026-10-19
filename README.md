@@ -8,7 +8,7 @@ animated kolam/rangoli artwork (see [How the kolam animation works](#how-the-kol
 | --- | --- |
 | Frontend | Next.js 16 (App Router, TypeScript, Tailwind CSS 4) |
 | Backend | Node.js 24 + Express 5 |
-| Database | PostgreSQL 16 |
+| Database | MySQL 8.4 (also runs on MySQL 8.0.16+, MariaDB 10.11 and GoDaddy's managed MySQL) |
 | Payments | Razorpay (UPI, cards, net banking, wallets) and Stripe (international cards) |
 | Images | Amazon S3 (local disk in development) |
 | Email | Nodemailer over SMTP (SendGrid, SES or any SMTP server) |
@@ -46,7 +46,8 @@ animated kolam/rangoli artwork (see [How the kolam animation works](#how-the-kol
 - Signed webhook verification (Razorpay HMAC, Stripe signature), webhook de-duplication
 - httpOnly session cookies, origin-checked CSRF protection, rate limiting, input validation (zod),
   parameterised SQL, magic-byte checks on image uploads
-- Automated API test suite (35 tests) covering auth, cart, checkout, both gateways, webhooks, reviews and admin
+- Automated API test suite (59 tests) covering auth, cart, checkout, both gateways, webhooks, reviews,
+  discounts, gift cards, settings and admin
 
 ## Project structure
 
@@ -65,7 +66,8 @@ frontend/             Next.js app
   src/lib/            API client, types, formatting helpers
 docs/                 API reference, deployment guide, client checklist, admin guide
 deploy/Caddyfile      reverse proxy with automatic HTTPS
-docker-compose.yml    local PostgreSQL + Mailpit
+deploy/godaddy/       bundle builder for GoDaddy Node.js Hosting (managed MySQL)
+docker-compose.yml    local MySQL + Mailpit
 docker-compose.prod.yml  production stack
 ```
 
@@ -74,7 +76,7 @@ docker-compose.prod.yml  production stack
 Prerequisites: Node.js 22.12+ (24 recommended) and Docker.
 
 ```bash
-# 1. Start PostgreSQL (localhost:5434) and Mailpit (email viewer at http://localhost:8025)
+# 1. Start MySQL (localhost:3307, databases shop and shop_test) and Mailpit (email viewer at http://localhost:8025)
 docker compose up -d
 
 # 2. Backend
@@ -117,15 +119,16 @@ and a tunnel such as ngrok for Razorpay.
 | frontend | `npm run dev` / `build` / `start` | Next.js dev server / production build / serve |
 | frontend | `npm run lint` | ESLint |
 
-Test database (one-off):
+The `shop_test` database is created by `docker/mysql-init/` when the MySQL container first starts. For an
+older container, create it once:
 ```bash
-docker exec shop-postgres psql -U shop -d shop -c "CREATE DATABASE shop_test"
+docker exec shop-mysql mysql -uroot -pshop-root -e "CREATE DATABASE shop_test; GRANT ALL ON shop_test.* TO 'shop'@'%'"
 ```
 
 ## How requests flow
 
 ```
-Browser ──► Next.js (:3000) ──rewrite /api/*, /uploads/*──► Express (:4000) ──► PostgreSQL
+Browser ──► Next.js (:3000) ──rewrite /api/*, /uploads/*──► Express (:4000) ──► MySQL
                                                                   ├──► Razorpay / Stripe
 Razorpay / Stripe webhooks ─────────────────────────────────────► │──► S3, SMTP, MSG91/Twilio
                                                                   └──► Shiprocket, WATI
@@ -156,9 +159,18 @@ the border and off mirrors placed between some dots. A seeded random generator p
 
 `frontend/src/components/kolam.tsx` renders it as SVG and animates it with CSS only: dots appear from the
 centre outward, the line is "drawn" loop by loop like flowing rice flour, rangoli colours fill in, then
-the design turns slowly. It's used in the home, About and Reviews heroes, the logo, category tiles, the
-footer and a faint fixed background layer behind the storefront. Animations are disabled for visitors who
-prefer reduced motion. The palette lives in `frontend/src/app/globals.css` (`brand` = saffron orange).
+the design turns slowly. It's used in the home, About and Reviews heroes, category tiles, the footer and a
+faint fixed background layer behind the storefront. Animations are disabled for visitors who prefer reduced
+motion. The palette lives in `frontend/src/app/globals.css` (`brand` = saffron orange).
+
+## Logo and icons
+
+The brand logo (bowl of jalebi with the "Noruku Theeni.in" wordmark) comes from the designer's Illustrator
+PDF. `frontend/public/logo-240.webp` / `logo-480.webp` (transparent, used by `components/logo.tsx` in the
+header, footer and admin) and `logo.png` (email header) are rendered from it. The favicon, `icon.png` and
+`apple-icon.png` in `frontend/src/app/` show only the bowl on a cream tile, and `opengraph-image.png` is the
+link preview shown when the site is shared on WhatsApp or social media. To change the logo, replace these
+files with versions of the same size.
 
 ## Documentation
 

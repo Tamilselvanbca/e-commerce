@@ -51,7 +51,7 @@ describe('admin settings', () => {
     assert.equal(cfg.body.shippingFee, 9900);
     assert.equal(cfg.body.whatsappNumber, null);
 
-    const row = await queryOne(`SELECT value, is_secret FROM settings WHERE key = 'STORE_NAME'`);
+    const row = await queryOne("SELECT value, is_secret FROM settings WHERE `key` = 'STORE_NAME'");
     assert.deepEqual(row, { value: 'Sweet Test', isSecret: false });
 
     await save({ STORE_NAME: null, SHIPPING_FEE: null, WHATSAPP_NUMBER: null }).expect(200);
@@ -59,7 +59,7 @@ describe('admin settings', () => {
     assert.equal(reset.body.storeName, 'Test Store');
     assert.equal(reset.body.shippingFee, 4900);
     assert.equal(reset.body.whatsappNumber, '919876543210');
-    assert.equal((await query('SELECT key FROM settings')).length, 0);
+    assert.equal((await query('SELECT `key` FROM settings')).length, 0);
   });
 
   test('secrets are encrypted at rest and only shown as a hint', async () => {
@@ -70,7 +70,7 @@ describe('admin settings', () => {
     assert.ok(!JSON.stringify(res.body).includes('sk_test_brandnew12345'));
     assert.equal(config.stripe.secretKey, 'sk_test_brandnew12345');
 
-    const row = await queryOne(`SELECT value, is_secret FROM settings WHERE key = 'STRIPE_SECRET_KEY'`);
+    const row = await queryOne("SELECT value, is_secret FROM settings WHERE `key` = 'STRIPE_SECRET_KEY'");
     assert.equal(row.isSecret, true);
     assert.match(row.value, /^enc:v1:/);
     assert.ok(!row.value.includes('brandnew'));
@@ -100,7 +100,7 @@ describe('admin settings', () => {
     assert.equal(res.body.error.details[0].path, 'STORE_TIMEZONE');
 
     // Nothing was saved by the failed requests.
-    assert.equal((await query('SELECT key FROM settings')).length, 0);
+    assert.equal((await query('SELECT `key` FROM settings')).length, 0);
     assert.equal(config.store.shippingFee, 4900);
   });
 
@@ -119,7 +119,7 @@ describe('admin settings', () => {
 
   test('startup skips saved values that are invalid or cannot be decrypted', async () => {
     await query(
-      `INSERT INTO settings (key, value, is_secret) VALUES
+      `INSERT INTO settings (\`key\`, value, is_secret) VALUES
          ('STORE_NAME', 'Loaded From DB', false),
          ('SHIPPING_FEE', '-5', false),
          ('RAZORPAY_KEY_SECRET', 'enc:v1:garbage', true)`,

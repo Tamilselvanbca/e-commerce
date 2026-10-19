@@ -1,4 +1,4 @@
-import { query, queryOne } from '../db/pool.js';
+import { pool, query, queryOne } from '../db/pool.js';
 import { badRequest, notFound } from '../lib/errors.js';
 
 const COLUMNS = `r.id, r.rating, r.title, r.body, r.author_name, r.author_city, r.author_country,
@@ -22,8 +22,8 @@ function toReview(r, withProduct = false) {
 /** Rating summary (average, count, 1–5 distribution) for a product or the whole store. */
 export async function ratingSummary(productId = null) {
   const rows = await query(
-    `SELECT rating, count(*) FROM reviews
-      WHERE status = 'published' AND ($1::uuid IS NULL OR product_id = $1)
+    `SELECT rating, count(*) AS count FROM reviews
+      WHERE status = 'published' AND ($1 IS NULL OR product_id = $1)
       GROUP BY rating`,
     [productId],
   );
@@ -55,7 +55,7 @@ export async function listReviews({ productId = null, rating = null, sort = 'new
   if (rating) where.push(`r.rating = ${add(rating)}`);
   if (q) {
     const like = add(`%${q.replace(/[%_\\]/g, '\\$&')}%`);
-    where.push(`(r.body ILIKE ${like} OR r.title ILIKE ${like} OR r.author_name ILIKE ${like} OR p.name ILIKE ${like})`);
+    where.push(`(r.body LIKE ${like} OR r.title LIKE ${like} OR r.author_name LIKE ${like} OR p.name LIKE ${like})`);
   }
   const rows = await query(
     `SELECT ${COLUMNS}, p.id AS product_id, p.name AS product_name, p.slug AS product_slug,
@@ -110,25 +110,26 @@ export async function saveReview(user, productId, { rating, title, body }) {
     throw badRequest('You can review products from your paid orders. Place an order to share your thoughts.');
   }
   const address = eligibility.order.shippingAddress ?? {};
-  const row = await queryOne(
+  // One review per customer and product: editing replaces it.
+  await query(
     `INSERT INTO reviews (product_id, user_id, order_id, author_name, author_city, author_country, rating, title, body, verified)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
-     ON CONFLICT (product_id, user_id) WHERE user_id IS NOT NULL DO UPDATE SET
-       rating = EXCLUDED.rating, title = EXCLUDED.title, body = EXCLUDED.body,
-       author_name = EXCLUDED.author_name, order_id = EXCLUDED.order_id
-     RETURNING ${COLUMNS.replace(/r\./g, '')}`,
+     ON DUPLICATE KEY UPDATE
+       rating = VALUES(rating), title = VALUES(title), body = VALUES(body),
+       author_name = VALUES(author_name), order_id = VALUES(order_id)`,
     [productId, user.id, eligibility.order.id, reviewerName(user.name), address.city ?? null, address.country ?? null, rating, title, body],
   );
+  const row = await queryOne(`SELECT ${COLUMNS} FROM reviews r WHERE r.product_id = $1 AND r.user_id = $2`, [productId, user.id]);
   return toReview(row);
 }
 
 export async function setReviewStatus(id, status) {
-  const row = await queryOne(`UPDATE reviews SET status = $2 WHERE id = $1 RETURNING id, status`, [id, status]);
-  if (!row) throw notFound('Review not found');
-  return row;
+  const { rowCount } = await pool.query('UPDATE reviews SET status = $2 WHERE id = $1', [id, status]);
+  if (!rowCount) throw notFound('Review not found');
+  return { id, status };
 }
 
 export async function deleteReview(id) {
-  const rows = await query('DELETE FROM reviews WHERE id = $1 RETURNING id', [id]);
-  if (!rows.length) throw notFound('Review not found');
+  const { rowCount } = await pool.query('DELETE FROM reviews WHERE id = $1', [id]);
+  if (!rowCount) throw notFound('Review not found');
 }

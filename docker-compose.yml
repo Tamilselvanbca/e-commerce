@@ -1,23 +1,28 @@
-# Local development services: PostgreSQL + Mailpit (catches outgoing email).
+# Local development services: MySQL + Mailpit (catches outgoing email).
 # Start with:  docker compose up -d
+# MySQL matches GoDaddy Node.js Hosting's managed database. The `shop_test`
+# database for `npm test` is created on first start (docker/mysql-init).
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: shop-postgres
+  mysql:
+    image: mysql:8.4
+    container_name: shop-mysql
     restart: unless-stopped
     environment:
-      POSTGRES_USER: shop
-      POSTGRES_PASSWORD: shop
-      POSTGRES_DB: shop
+      MYSQL_DATABASE: shop
+      MYSQL_USER: shop
+      MYSQL_PASSWORD: shop
+      MYSQL_ROOT_PASSWORD: shop-root
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
     ports:
-      - "127.0.0.1:5434:5432"
+      - "127.0.0.1:3307:3306"
     volumes:
-      - shop_pgdata:/var/lib/postgresql/data
+      - shop_mysql:/var/lib/mysql
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U shop -d shop"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -ushop -pshop --silent"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
 
   mailpit:
     image: axllent/mailpit:v1.27
@@ -28,4 +33,4 @@ services:
       - "127.0.0.1:8025:8025" # Web UI -> http://localhost:8025
 
 volumes:
-  shop_pgdata:
+  shop_mysql:

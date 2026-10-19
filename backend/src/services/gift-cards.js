@@ -1,7 +1,7 @@
 // Gift cards: a code with a balance that pays for part or all of an order.
 // The amount used is taken off the card when the order is placed and put back
 // if the order is cancelled (customer, store or payment timeout).
-import crypto from 'node:crypto';
+import crypto, { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { pool, query, queryOne, transaction } from '../db/pool.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
@@ -87,13 +87,16 @@ async function addTransaction(db, { cardId, orderId = null, kind, amount, note =
 }
 
 /** Takes `amount` off a card for an order. The card row must be locked. */
+/** Takes `amount` off a card if the balance covers it; returns whether it did. */
+async function deduct(db, cardId, amount) {
+  const { rowCount } = await db.query('UPDATE gift_cards SET balance = balance - $2 WHERE id = $1 AND balance >= $2', [cardId, amount]);
+  return rowCount > 0;
+}
+
 export async function redeemGiftCard(db, { cardId, orderId, amount, note = null }) {
-  const updated = await queryOne(
-    'UPDATE gift_cards SET balance = balance - $2 WHERE id = $1 AND balance >= $2 RETURNING id',
-    [cardId, amount],
-    db,
-  );
-  if (!updated) throw conflict('GIFT_CARD_INVALID', 'The gift card balance has changed. Please apply it again.');
+  if (!(await deduct(db, cardId, amount))) {
+    throw conflict('GIFT_CARD_INVALID', 'The gift card balance has changed. Please apply it again.');
+  }
   await addTransaction(db, { cardId, orderId, kind: 'redeem', amount: -amount, note });
 }
 
@@ -126,12 +129,7 @@ export async function reclaimGiftCardForOrder(db, { orderId, giftCardId, amount 
   const { held } = await heldForOrder(db, orderId);
   const missing = amount - held;
   if (missing <= 0) return true;
-  const updated = await queryOne(
-    'UPDATE gift_cards SET balance = balance - $2 WHERE id = $1 AND balance >= $2 RETURNING id',
-    [giftCardId, missing],
-    db,
-  );
-  if (!updated) return false;
+  if (!(await deduct(db, giftCardId, missing))) return false;
   await addTransaction(db, { cardId: giftCardId, orderId, kind: 'redeem', amount: -missing, note: 'Order reinstated after late payment' });
   return true;
 }
@@ -171,7 +169,7 @@ export async function listGiftCards({ q, status, page, pageSize }) {
   if (q) {
     const code = normalizeGiftCardCode(q);
     const like = add(`%${q.replace(/[%_\\]/g, '\\$&')}%`);
-    where.push(`(g.recipient_name ILIKE ${like} OR g.recipient_email ILIKE ${like}${code.length >= 4 ? ` OR g.code LIKE ${add(`%${code}%`)}` : ''})`);
+    where.push(`(g.recipient_name LIKE ${like} OR g.recipient_email LIKE ${like}${code.length >= 4 ? ` OR g.code LIKE ${add(`%${code}%`)}` : ''})`);
   }
   if (status === 'active') where.push('g.is_active AND g.balance > 0 AND (g.expires_at IS NULL OR g.expires_at > now())');
   if (status === 'used') where.push('g.is_active AND g.balance = 0');
@@ -186,7 +184,7 @@ export async function listGiftCards({ q, status, page, pageSize }) {
   );
   const total = rows[0]?.fullCount ?? 0;
   const totals = await queryOne(
-    `SELECT coalesce(sum(balance) FILTER (WHERE is_active AND (expires_at IS NULL OR expires_at > now())), 0) AS outstanding,
+    `SELECT coalesce(sum(CASE WHEN is_active AND (expires_at IS NULL OR expires_at > now()) THEN balance ELSE 0 END), 0) AS outstanding,
             count(*) AS cards
        FROM gift_cards`,
   );
@@ -213,16 +211,17 @@ async function insertGiftCard(db, input, adminId = null) {
   for (let attempt = 0; ; attempt++) {
     await db.query('SAVEPOINT gift_card_insert');
     try {
-      const row = await queryOne(
-        `INSERT INTO gift_cards (code, initial_balance, balance, currency, recipient_name, recipient_email,
+      const id = randomUUID();
+      await query(
+        `INSERT INTO gift_cards (id, code, initial_balance, balance, currency, recipient_name, recipient_email,
                                  sender_name, message, expires_at, created_by, order_item_id)
-         VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-        [generateGiftCardCode(), input.amount, config.store.currency, input.recipientName ?? null, input.recipientEmail ?? null,
+         VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [id, generateGiftCardCode(), input.amount, config.store.currency, input.recipientName ?? null, input.recipientEmail ?? null,
           input.senderName ?? null, input.message ?? null, input.expiresAt ?? null, adminId, input.orderItemId ?? null],
         db,
       );
-      await addTransaction(db, { cardId: row.id, orderId: input.orderId ?? null, kind: 'issue', amount: input.amount, note: input.note ?? null, by: adminId });
-      return row.id;
+      await addTransaction(db, { cardId: id, orderId: input.orderId ?? null, kind: 'issue', amount: input.amount, note: input.note ?? null, by: adminId });
+      return id;
     } catch (err) {
       if (err.code === '23505' && err.constraint === 'gift_cards_code_key' && attempt < 5) {
         await db.query('ROLLBACK TO SAVEPOINT gift_card_insert');
@@ -288,8 +287,8 @@ export async function updateGiftCard(id, input) {
     if (input[key] !== undefined) sets.push(`${column} = $${params.push(input[key])}`);
   }
   if (sets.length) {
-    const row = await queryOne(`UPDATE gift_cards SET ${sets.join(', ')} WHERE id = $1 RETURNING id`, params);
-    if (!row) throw notFound('Gift card not found');
+    const { rowCount } = await pool.query(`UPDATE gift_cards SET ${sets.join(', ')} WHERE id = $1`, params);
+    if (!rowCount) throw notFound('Gift card not found');
   }
   return getGiftCard(id);
 }

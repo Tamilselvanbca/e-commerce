@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import supertest from 'supertest';
 import { createApp } from '../src/app.js';
 import { migrate } from '../src/db/migrate.js';
@@ -12,15 +13,16 @@ export const newAgent = () => supertest.agent(app);
 /** Drops and recreates the schema, then inserts a small fixed catalog. */
 export async function resetDb() {
   await migrate({ reset: true, silent: true, keepSettings: false });
-  const cat = await queryOne(`INSERT INTO categories (name, slug) VALUES ('Tees', 'tees') RETURNING id`);
-  const tee = await queryOne(
-    `INSERT INTO products (name, slug, description, category_id, is_featured)
-     VALUES ('Test Tee', 'test-tee', 'Soft cotton tee', $1, true) RETURNING id`,
-    [cat.id],
+  const cat = { id: randomUUID() };
+  await query(`INSERT INTO categories (id, name, slug) VALUES ($1, 'Tees', 'tees')`, [cat.id]);
+  const tee = { id: randomUUID() };
+  await query(
+    `INSERT INTO products (id, name, slug, description, category_id, is_featured)
+     VALUES ($1, 'Test Tee', 'test-tee', 'Soft cotton tee', $2, true)`,
+    [tee.id, cat.id],
   );
-  const bag = await queryOne(
-    `INSERT INTO products (name, slug, description) VALUES ('Test Bag', 'test-bag', 'Canvas bag') RETURNING id`,
-  );
+  const bag = { id: randomUUID() };
+  await query(`INSERT INTO products (id, name, slug, description) VALUES ($1, 'Test Bag', 'test-bag', 'Canvas bag')`, [bag.id]);
   const variants = {};
   for (const [key, productId, sku, size, color, price, stock] of [
     ['teeM', tee.id, 'TT-M-BLK', 'M', 'Black', 50000, 5],
@@ -28,11 +30,11 @@ export async function resetDb() {
     ['teeS', tee.id, 'TT-S-WHT', 'S', 'White', 45000, 0],
     ['bag', bag.id, 'TB-NAT', null, 'Natural', 120000, 10],
   ]) {
-    const v = await queryOne(
-      `INSERT INTO product_variants (product_id, sku, size, color, price, stock) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [productId, sku, size, color, price, stock],
+    variants[key] = randomUUID();
+    await query(
+      'INSERT INTO product_variants (id, product_id, sku, size, color, price, stock) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [variants[key], productId, sku, size, color, price, stock],
     );
-    variants[key] = v.id;
   }
   return { categoryId: cat.id, teeId: tee.id, bagId: bag.id, variants };
 }

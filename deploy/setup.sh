@@ -61,10 +61,11 @@ cd "$APP_DIR"
 
 umask 077
 if [ ! -f .env ]; then
-  log "Creating .env (domain and database password)"
-  printf 'DOMAIN=%s\nPOSTGRES_PASSWORD=%s\n' "$DOMAIN" "$(rand)" > .env
+  log "Creating .env (domain and database passwords)"
+  printf 'DOMAIN=%s\nMYSQL_PASSWORD=%s\nMYSQL_ROOT_PASSWORD=%s\n' "$DOMAIN" "$(rand)" "$(rand)" > .env
 else
   sed -i "s/^DOMAIN=.*/DOMAIN=${DOMAIN}/" .env
+  grep -q '^MYSQL_PASSWORD=' .env || printf 'MYSQL_PASSWORD=%s\nMYSQL_ROOT_PASSWORD=%s\n' "$(rand)" "$(rand)" >> .env
 fi
 
 if [ ! -f backend/.env.production ]; then
@@ -120,7 +121,7 @@ if [ -z "${healthy:-}" ]; then
   exit 1
 fi
 
-products=$("${COMPOSE[@]}" exec -T postgres psql -U shop -d shop -tAc 'SELECT count(*) FROM products' | tr -d '[:space:]')
+products=$("${COMPOSE[@]}" exec -T mysql sh -c 'mysql -ushop -p"$MYSQL_PASSWORD" -N -e "SELECT count(*) FROM products" shop 2>/dev/null' | tr -d '[:space:]')
 if [ "$products" = "0" ] && [ "${SEED:-yes}" = "yes" ]; then
   log "Adding the starter catalogue (edit or replace it in Admin -> Products)"
   "${COMPOSE[@]}" exec -T backend node src/db/seed.js
@@ -130,7 +131,7 @@ log "Scheduling daily backups to /var/backups/shop (kept 14 days)"
 mkdir -p /var/backups/shop
 cat > /etc/cron.d/shop-backup <<EOF
 # Daily database and image backups for the store.
-30 2 * * * root cd ${APP_DIR} && docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U shop shop | gzip > /var/backups/shop/db-\$(date +\%F).sql.gz
+30 2 * * * root cd ${APP_DIR} && docker compose -f docker-compose.prod.yml exec -T mysql sh -c 'mysqldump --single-transaction --no-tablespaces -ushop -p"\$MYSQL_PASSWORD" shop 2>/dev/null' | gzip > /var/backups/shop/db-\$(date +\%F).sql.gz
 45 2 * * * root docker run --rm -v shop_uploads:/u:ro -v /var/backups/shop:/b alpine tar czf /b/uploads-\$(date +\%F).tgz -C /u .
 0 3 * * * root find /var/backups/shop -type f -mtime +14 -delete
 EOF

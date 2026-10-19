@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import { query, queryOne } from '../../db/pool.js';
+import { pool, query, queryOne } from '../../db/pool.js';
 import { AppError, badRequest, notFound } from '../../lib/errors.js';
 import { slugify } from '../../lib/util.js';
 import { optionalText, parse, uuid } from '../../lib/validate.js';
@@ -20,8 +21,10 @@ const schema = z.object({
 
 const COLUMNS = 'id, name, slug, description, image_url, parent_id, sort_order, is_active';
 
-async function withCount(row) {
-  const { count } = await queryOne(`SELECT count(*) FROM products WHERE category_id = $1 AND status = 'active'`, [row.id]);
+async function withCount(id) {
+  const row = await queryOne(`SELECT ${COLUMNS} FROM categories WHERE id = $1`, [id]);
+  if (!row) throw notFound('Category not found');
+  const { count } = await queryOne(`SELECT count(*) AS count FROM products WHERE category_id = $1 AND status = 'active'`, [id]);
   return { ...row, productCount: count };
 }
 
@@ -57,39 +60,41 @@ router.get('/categories', async (_req, res) => {
 router.post('/categories', async (req, res) => {
   const body = parse(schema, req.body);
   await assertValidParent(null, body.parentId);
+  const id = randomUUID();
   try {
-    const row = await queryOne(
-      `INSERT INTO categories (name, slug, description, image_url, parent_id, sort_order, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${COLUMNS}`,
-      [body.name, body.slug ?? slugify(body.name), body.description, body.imageUrl, body.parentId, body.sortOrder, body.isActive],
+    await query(
+      `INSERT INTO categories (id, name, slug, description, image_url, parent_id, sort_order, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [id, body.name, body.slug ?? slugify(body.name), body.description, body.imageUrl, body.parentId, body.sortOrder, body.isActive],
     );
-    res.status(201).json(await withCount(row));
   } catch (err) {
     throw slugConflict(err);
   }
+  res.status(201).json(await withCount(id));
 });
 
 router.put('/categories/:id', async (req, res) => {
   const id = parse(uuid, req.params.id);
   const body = parse(schema, req.body);
   await assertValidParent(id, body.parentId);
+  let rowCount;
   try {
-    const row = await queryOne(
+    ({ rowCount } = await pool.query(
       `UPDATE categories SET name = $2, slug = $3, description = $4, image_url = $5, parent_id = $6, sort_order = $7, is_active = $8
-        WHERE id = $1 RETURNING ${COLUMNS}`,
+        WHERE id = $1`,
       [id, body.name, body.slug ?? slugify(body.name), body.description, body.imageUrl, body.parentId, body.sortOrder, body.isActive],
-    );
-    if (!row) throw notFound('Category not found');
-    res.json(await withCount(row));
+    ));
   } catch (err) {
     throw slugConflict(err);
   }
+  if (!rowCount) throw notFound('Category not found');
+  res.json(await withCount(id));
 });
 
 router.delete('/categories/:id', async (req, res) => {
   const id = parse(uuid, req.params.id);
-  const rows = await query('DELETE FROM categories WHERE id = $1 RETURNING id', [id]);
-  if (!rows.length) throw notFound('Category not found');
+  const { rowCount } = await pool.query('DELETE FROM categories WHERE id = $1', [id]);
+  if (!rowCount) throw notFound('Category not found');
   res.status(204).end();
 });
 

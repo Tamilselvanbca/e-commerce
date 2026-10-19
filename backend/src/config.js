@@ -24,12 +24,9 @@ const schema = z.object({
     .string()
     .default('loopback, linklocal, uniquelocal')
     .transform((v) => (/^\d+$/.test(v) ? Number(v) : v === 'false' ? false : v)),
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  // pg = normal TCP connection; neon = Neon's driver over WebSockets on port 443, for hosts
-  // that only allow HTTP(S) out (GoDaddy Node.js Hosting). Default: neon for *.neon.tech URLs.
-  DATABASE_DRIVER: z.enum(['pg', 'neon']).optional(),
-  // Testing only: route the neon driver through a local wsproxy, e.g. localhost:5435/v1
-  DATABASE_WS_PROXY: optionalString,
+  // MySQL: mysql://user:password@host:3306/database. Ignored when DB_HOST is set: on GoDaddy
+  // Node.js Hosting the managed MySQL arrives as DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD.
+  DATABASE_URL: optionalString,
   FRONTEND_URL: z.string().url().default('http://localhost:3000'),
   CORS_ORIGINS: csv,
   LOG_LEVEL: z.string().default('info'),
@@ -133,6 +130,11 @@ const schema = z.object({
 function crossFieldIssues(env, level) {
   const issues = [];
   const isProd = env.NODE_ENV === 'production';
+  if (!env.DATABASE_URL && !process.env.DB_HOST) {
+    issues.push({ path: 'DATABASE_URL', message: 'Set DATABASE_URL (mysql://user:password@host:3306/database) or the DB_HOST, DB_NAME, DB_USER and DB_PASSWORD variables' });
+  } else if (!process.env.DB_HOST && !/^mysql:\/\//i.test(env.DATABASE_URL)) {
+    issues.push({ path: 'DATABASE_URL', message: 'DATABASE_URL must be a MySQL address (mysql://user:password@host:3306/database)' });
+  }
   if (isProd && env.OTP_EXPOSE_IN_RESPONSE) {
     issues.push({ path: 'OTP_EXPOSE_IN_RESPONSE', message: 'OTP_EXPOSE_IN_RESPONSE must not be enabled in production' });
   }
@@ -161,12 +163,20 @@ function crossFieldIssues(env, level) {
   return issues;
 }
 
-function isNeonUrl(url) {
-  try {
-    return new URL(url).hostname.endsWith('.neon.tech');
-  } catch {
-    return false;
-  }
+/**
+ * MySQL connection options for mysql2: the DB_* variables that GoDaddy Node.js
+ * Hosting injects for its managed MySQL when present (so a leftover DATABASE_URL
+ * can't point the live store elsewhere), otherwise DATABASE_URL.
+ */
+function databaseConnection(env) {
+  if (!process.env.DB_HOST) return { uri: env.DATABASE_URL };
+  return {
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT) || 3306,
+    database: process.env.DB_NAME,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+  };
 }
 
 /** Parses and checks a set of raw (string) variables. `level` is base, boot or strict (see above). */
@@ -193,11 +203,7 @@ function build(source, level = 'boot') {
     isTest: env.NODE_ENV === 'test',
     port: env.PORT,
     trustProxy: env.TRUST_PROXY,
-    databaseUrl: env.DATABASE_URL,
-    database: {
-      driver: env.DATABASE_DRIVER ?? (isNeonUrl(env.DATABASE_URL) ? 'neon' : 'pg'),
-      wsProxy: env.DATABASE_WS_PROXY,
-    },
+    database: databaseConnection(env),
     frontendUrl: env.FRONTEND_URL.replace(/\/$/, ''),
     corsOrigins: [env.FRONTEND_URL.replace(/\/$/, ''), ...env.CORS_ORIGINS],
     logLevel: env.LOG_LEVEL,

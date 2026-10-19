@@ -32,8 +32,7 @@ try {
     `# Generated ${new Date().toISOString()} from this computer's store settings.`,
     '# Contains secrets: add them in the hosting UI, keep a safe copy, then delete this file.',
     '',
-    '# Paste the connection string from your Neon project (neon.tech -> Connect).',
-    'DATABASE_URL=',
+    '# No database variables: GoDaddy managed MySQL sets DB_HOST, DB_PORT, DB_NAME, DB_USER and DB_PASSWORD.',
     `FRONTEND_URL=${siteUrl}`,
     '# New random keys for the live store. Keep a copy: secrets saved in Admin -> Settings depend on SETTINGS_ENCRYPTION_KEY.',
     `OTP_SECRET=${random()}`,
@@ -46,7 +45,7 @@ try {
   ];
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, lines.join('\n'), { mode: 0o600 });
-  console.log(`Wrote ${target} (${values.length} store settings). Fill in DATABASE_URL, then add the values in GoDaddy.`);
+  console.log(`Wrote ${target} (${values.length} store settings). Add the values in GoDaddy, then delete the file.`);
 } finally {
   await pool.end();
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { pool, query, queryOne, transaction } from '../db/pool.js';
 import { conflict, notFound } from '../lib/errors.js';
@@ -19,6 +20,16 @@ function cartCookieOptions() {
   };
 }
 
+/** The user's cart id, creating the cart if needed (safe under concurrent requests). */
+async function ensureUserCart(userId, db = pool) {
+  await query(
+    'INSERT INTO carts (id, user_id) VALUES ($1, $2) ON DUPLICATE KEY UPDATE updated_at = NOW(3)',
+    [randomUUID(), userId],
+    db,
+  );
+  return (await queryOne('SELECT id FROM carts WHERE user_id = $1', [userId], db)).id;
+}
+
 /**
  * Finds the cart for this request (user cart when logged in, otherwise the
  * guest cart from the cookie). With `create`, a cart is created if missing.
@@ -28,13 +39,7 @@ export async function resolveCartId(req, res, { create = false } = {}) {
   if (req.user) {
     const existing = await queryOne('SELECT id FROM carts WHERE user_id = $1', [req.user.id]);
     if (existing) return existing.id;
-    if (!create) return null;
-    const created = await queryOne(
-      `INSERT INTO carts (user_id) VALUES ($1)
-       ON CONFLICT (user_id) DO UPDATE SET updated_at = now() RETURNING id`,
-      [req.user.id],
-    );
-    return created.id;
+    return create ? ensureUserCart(req.user.id) : null;
   }
 
   const cookieId = req.cookies?.[CART_COOKIE];
@@ -43,9 +48,10 @@ export async function resolveCartId(req, res, { create = false } = {}) {
     if (guest) return guest.id;
   }
   if (!create) return null;
-  const created = await queryOne('INSERT INTO carts DEFAULT VALUES RETURNING id');
-  res.cookie(CART_COOKIE, created.id, cartCookieOptions());
-  return created.id;
+  const id = randomUUID();
+  await query('INSERT INTO carts (id) VALUES ($1)', [id]);
+  res.cookie(CART_COOKIE, id, cartCookieOptions());
+  return id;
 }
 
 /** Loads the cart with live product data, prices and availability. */
@@ -118,10 +124,10 @@ export async function addItem(cartId, variantId, quantity) {
   if (next > v.stock) throw outOfStock(v, v.stock);
   await query(
     `INSERT INTO cart_items (cart_id, variant_id, quantity) VALUES ($1, $2, $3)
-     ON CONFLICT (cart_id, variant_id) DO UPDATE SET quantity = EXCLUDED.quantity`,
+     ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)`,
     [cartId, variantId, next],
   );
-  await query('UPDATE carts SET updated_at = now() WHERE id = $1', [cartId]);
+  await query('UPDATE carts SET updated_at = NOW(3) WHERE id = $1', [cartId]);
 }
 
 export async function updateItem(cartId, itemId, quantity) {
@@ -152,20 +158,17 @@ export async function mergeGuestCart(req, res, userId) {
   await transaction(async (db) => {
     const guest = await queryOne('SELECT id FROM carts WHERE id = $1 AND user_id IS NULL FOR UPDATE', [guestId], db);
     if (!guest) return;
-    const userCart = await queryOne(
-      `INSERT INTO carts (user_id) VALUES ($1)
-       ON CONFLICT (user_id) DO UPDATE SET updated_at = now() RETURNING id`,
-      [userId],
-      db,
-    );
-    await query(
-      `INSERT INTO cart_items (cart_id, variant_id, quantity)
-       SELECT $1, gi.variant_id, LEAST(gi.quantity, $3) FROM cart_items gi WHERE gi.cart_id = $2
-       ON CONFLICT (cart_id, variant_id) DO UPDATE
-         SET quantity = LEAST(cart_items.quantity + EXCLUDED.quantity, $3)`,
-      [userCart.id, guest.id, MAX_LINE_QUANTITY],
-      db,
-    );
+    const userCartId = await ensureUserCart(userId, db);
+    const items = await query('SELECT variant_id, quantity FROM cart_items WHERE cart_id = $1', [guest.id], db);
+    for (const item of items) {
+      // In ON DUPLICATE KEY UPDATE, `quantity` is the existing line, VALUES(quantity) the guest's.
+      await query(
+        `INSERT INTO cart_items (cart_id, variant_id, quantity) VALUES ($1, $2, LEAST($3, $4))
+         ON DUPLICATE KEY UPDATE quantity = LEAST(quantity + VALUES(quantity), $4)`,
+        [userCartId, item.variantId, item.quantity, MAX_LINE_QUANTITY],
+        db,
+      );
+    }
     await query('DELETE FROM carts WHERE id = $1', [guest.id], db);
   });
 }

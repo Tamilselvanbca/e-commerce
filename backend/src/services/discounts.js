@@ -2,6 +2,7 @@
 // Only one discount applies to an order; when a code and an automatic offer
 // both qualify, the bigger saving wins. A discount is "used" by every order
 // that carries it and isn't cancelled, so expired checkouts free the usage.
+import { randomUUID } from 'node:crypto';
 import { pool, query, queryOne } from '../db/pool.js';
 import { conflict, notFound } from '../lib/errors.js';
 import { formatMoney } from '../lib/util.js';
@@ -40,7 +41,7 @@ export function discountAmount(d, subtotal, shippingFee) {
 /** Orders that count towards the usage limits (not cancelled). */
 async function usageCounts(discountId, userId, db) {
   return queryOne(
-    `SELECT count(*) AS total, count(*) FILTER (WHERE user_id = $2) AS mine
+    `SELECT count(*) AS total, count(CASE WHEN user_id = $2 THEN 1 END) AS mine
        FROM orders WHERE discount_id = $1 AND status <> 'cancelled'`,
     [discountId, userId],
     db,
@@ -175,7 +176,7 @@ export async function listDiscounts({ q, kind, status }) {
   const add = (v) => `$${params.push(v)}`;
   if (q) {
     const like = add(`%${q.replace(/[%_\\]/g, '\\$&')}%`);
-    where.push(`(d.code ILIKE ${like} OR d.title ILIKE ${like})`);
+    where.push(`(d.code LIKE ${like} OR d.title LIKE ${like})`);
   }
   if (kind === 'code') where.push('d.code IS NOT NULL');
   if (kind === 'automatic') where.push('d.code IS NULL');
@@ -222,13 +223,14 @@ const duplicateCode = (err, code) => {
 
 export async function createDiscount(input) {
   const keys = Object.keys(COLUMN_FOR).filter((k) => input[k] !== undefined);
+  const id = randomUUID();
   try {
-    const row = await queryOne(
-      `INSERT INTO discounts (${keys.map((k) => COLUMN_FOR[k]).join(', ')})
-       VALUES (${keys.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING id`,
-      keys.map((k) => input[k]),
+    await query(
+      `INSERT INTO discounts (id, ${keys.map((k) => COLUMN_FOR[k]).join(', ')})
+       VALUES ($1, ${keys.map((_, i) => `$${i + 2}`).join(', ')})`,
+      [id, ...keys.map((k) => input[k])],
     );
-    return getDiscount(row.id);
+    return getDiscount(id);
   } catch (err) {
     throw duplicateCode(err, input.code);
   }
@@ -237,15 +239,16 @@ export async function createDiscount(input) {
 export async function updateDiscount(id, input) {
   const keys = Object.keys(COLUMN_FOR).filter((k) => input[k] !== undefined);
   if (keys.length) {
+    let rowCount;
     try {
-      const row = await queryOne(
-        `UPDATE discounts SET ${keys.map((k, i) => `${COLUMN_FOR[k]} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING id`,
+      ({ rowCount } = await pool.query(
+        `UPDATE discounts SET ${keys.map((k, i) => `${COLUMN_FOR[k]} = $${i + 2}`).join(', ')} WHERE id = $1`,
         [id, ...keys.map((k) => input[k])],
-      );
-      if (!row) throw notFound('Discount not found');
+      ));
     } catch (err) {
       throw duplicateCode(err, input.code);
     }
+    if (!rowCount) throw notFound('Discount not found');
   }
   return getDiscount(id);
 }
@@ -254,6 +257,6 @@ export async function updateDiscount(id, input) {
 export async function deleteDiscount(id) {
   const used = await queryOne('SELECT 1 FROM orders WHERE discount_id = $1 LIMIT 1', [id]);
   if (used) throw conflict('DISCOUNT_IN_USE', 'This discount has been used on orders. Switch it off instead of deleting it.');
-  const row = await queryOne('DELETE FROM discounts WHERE id = $1 RETURNING id', [id]);
-  if (!row) throw notFound('Discount not found');
+  const { rowCount } = await pool.query('DELETE FROM discounts WHERE id = $1', [id]);
+  if (!rowCount) throw notFound('Discount not found');
 }

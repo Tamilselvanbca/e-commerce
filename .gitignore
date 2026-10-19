@@ -1,4 +1,4 @@
-# Production compose secrets (DOMAIN, POSTGRES_PASSWORD)
+# Production compose secrets (DOMAIN, MYSQL_PASSWORD, MYSQL_ROOT_PASSWORD)
 .env
 # Generated deploy bundles (deploy/godaddy/build.mjs)
 dist/

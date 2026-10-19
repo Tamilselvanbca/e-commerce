@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
 import { pool, query, queryOne, transaction } from '../db/pool.js';
@@ -55,16 +56,18 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   const a = parse(createSchema, req.body);
   const address = await transaction(async (db) => {
-    const { count } = await queryOne('SELECT count(*) FROM addresses WHERE user_id = $1', [req.user.id], db);
+    const { count } = await queryOne('SELECT count(*) AS count FROM addresses WHERE user_id = $1', [req.user.id], db);
     const makeDefault = a.isDefault || count === 0;
     if (count >= 20) throw badRequest('You can save up to 20 addresses');
     if (makeDefault) await query('UPDATE addresses SET is_default = false WHERE user_id = $1 AND is_default', [req.user.id], db);
-    return queryOne(
-      `INSERT INTO addresses (user_id, full_name, phone, line1, line2, landmark, city, state, pincode, country, is_default)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING ${COLUMNS}`,
-      [req.user.id, a.fullName, a.phone, a.line1, a.line2, a.landmark, a.city, a.state, a.pincode, a.country, makeDefault],
+    const id = randomUUID();
+    await query(
+      `INSERT INTO addresses (id, user_id, full_name, phone, line1, line2, landmark, city, state, pincode, country, is_default)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [id, req.user.id, a.fullName, a.phone, a.line1, a.line2, a.landmark, a.city, a.state, a.pincode, a.country, makeDefault],
       db,
     );
+    return getAddress(req.user.id, id, db);
   });
   res.status(201).json(address);
 });
@@ -76,14 +79,15 @@ router.patch('/:id', async (req, res) => {
     const current = await getAddress(req.user.id, id, db);
     if (a.isDefault) await query('UPDATE addresses SET is_default = false WHERE user_id = $1 AND is_default', [req.user.id], db);
     const merged = { ...current, ...Object.fromEntries(Object.entries(a).filter(([, v]) => v !== undefined)) };
-    return queryOne(
+    await query(
       `UPDATE addresses SET full_name = $3, phone = $4, line1 = $5, line2 = $6, landmark = $7, city = $8,
               state = $9, pincode = $10, country = $11, is_default = $12
-        WHERE id = $1 AND user_id = $2 RETURNING ${COLUMNS}`,
+        WHERE id = $1 AND user_id = $2`,
       [id, req.user.id, merged.fullName, merged.phone, merged.line1, merged.line2, merged.landmark, merged.city,
         merged.state, merged.pincode, merged.country, a.isDefault ? true : current.isDefault],
       db,
     );
+    return getAddress(req.user.id, id, db);
   });
   res.json(address);
 });
@@ -95,12 +99,8 @@ router.delete('/:id', async (req, res) => {
     await query('DELETE FROM addresses WHERE id = $1', [id], db);
     if (current.isDefault) {
       // Promote the most recently used remaining address.
-      await query(
-        `UPDATE addresses SET is_default = true
-          WHERE id = (SELECT id FROM addresses WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1)`,
-        [req.user.id],
-        db,
-      );
+      const next = await queryOne('SELECT id FROM addresses WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1', [req.user.id], db);
+      if (next) await query('UPDATE addresses SET is_default = true WHERE id = $1', [next.id], db);
     }
   });
   res.status(204).end();
@@ -111,7 +111,8 @@ router.post('/:id/default', async (req, res) => {
   const address = await transaction(async (db) => {
     await getAddress(req.user.id, id, db);
     await query('UPDATE addresses SET is_default = false WHERE user_id = $1 AND is_default', [req.user.id], db);
-    return queryOne(`UPDATE addresses SET is_default = true WHERE id = $1 RETURNING ${COLUMNS}`, [id], db);
+    await query('UPDATE addresses SET is_default = true WHERE id = $1', [id], db);
+    return getAddress(req.user.id, id, db);
   });
   res.json(address);
 });

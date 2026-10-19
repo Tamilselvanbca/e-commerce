@@ -37,12 +37,13 @@ router.patch('/bulk-enquiries/:id', async (req, res) => {
     z.object({ status: z.enum(STATUSES).optional(), adminNotes: z.string().trim().max(2000).nullish() }),
     req.body,
   );
-  const row = await queryOne(
+  await query(
     `UPDATE bulk_enquiries SET status = coalesce($2, status),
             admin_notes = CASE WHEN $3 THEN $4 ELSE admin_notes END
-      WHERE id = $1 RETURNING ${COLUMNS}`,
+      WHERE id = $1`,
     [id, body.status ?? null, body.adminNotes !== undefined, body.adminNotes || null],
   );
+  const row = await queryOne(`SELECT ${COLUMNS} FROM bulk_enquiries WHERE id = $1`, [id]);
   if (!row) throw notFound('Enquiry not found');
   res.json(withLink(row));
 });

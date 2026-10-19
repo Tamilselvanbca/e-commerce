@@ -108,7 +108,7 @@ describe('checkout', () => {
 
   test('expired unpaid orders are cancelled and stock released', async () => {
     const res = await checkout('mock');
-    await query(`UPDATE orders SET expires_at = now() - interval '1 minute' WHERE id = $1`, [res.body.order.id]);
+    await query(`UPDATE orders SET expires_at = NOW(3) - INTERVAL 1 MINUTE WHERE id = $1`, [res.body.order.id]);
     const n = await expireStaleOrders();
     assert.equal(n, 1);
     assert.equal(await stock(fx.variants.teeM), 5);
@@ -214,14 +214,14 @@ describe('razorpay', () => {
     }
     const o = await agent.get(`/api/orders/${order.orderNumber}`).expect(200);
     assert.equal(o.body.paymentStatus, 'paid');
-    const events = await queryOne(`SELECT count(*) FROM webhook_events WHERE event_id = 'evt_1'`);
+    const events = await queryOne(`SELECT count(*) AS count FROM webhook_events WHERE event_id = 'evt_1'`);
     assert.equal(events.count, 1);
   });
 
   test('a payment arriving after expiry reinstates the order', async () => {
     const res = await checkout('razorpay');
     const { order, payment } = res.body;
-    await query(`UPDATE orders SET expires_at = now() - interval '1 minute' WHERE id = $1`, [order.id]);
+    await query(`UPDATE orders SET expires_at = NOW(3) - INTERVAL 1 MINUTE WHERE id = $1`, [order.id]);
     await expireStaleOrders();
     assert.equal(await stock(fx.variants.teeM), 5);
 

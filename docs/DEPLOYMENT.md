@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This guide deploys the whole stack (PostgreSQL, API, Next.js, HTTPS reverse proxy) on a single Linux
+This guide deploys the whole stack (MySQL, API, Next.js, HTTPS reverse proxy) on a single Linux
 server with Docker Compose. A 2 vCPU / 4 GB RAM VM (AWS EC2 or Lightsail in `ap-south-1`, or any VPS)
 is enough for a typical store.
 
@@ -15,8 +15,8 @@ GoDaddy's platform runs one Node.js app per upload, allows only HTTP/HTTPS out, 
 SMTP. `deploy/godaddy/build.mjs` turns this repo into a compatible single app:
 
 - website and API in one process (`server.js`) on `process.env.PORT`;
-- PostgreSQL on [Neon](https://neon.tech) through Neon's WebSocket driver over port 443 (picked automatically for
-  `*.neon.tech` URLs; `DATABASE_DRIVER=neon|pg` overrides);
+- GoDaddy's built-in managed MySQL through `mysql2`, using the `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` and
+  `DB_PASSWORD` variables the platform injects (they take precedence over `DATABASE_URL`);
 - email through GoDaddy's mail gateway (`EMAIL_TRANSPORT=godaddy`), images in `public/assets/uploads`
   (kept between deployments), visitor IPs from the CDN's `cf-connecting-ip` header;
 - build tools as regular dependencies, a lockfile and `.npmrc` for the public registry. The bundle passes
@@ -28,10 +28,10 @@ node --env-file=backend/.env deploy/godaddy/make-env.mjs    # dist/godaddy.env f
 ```
 
 Then:
-1. Create a free Neon project in the region nearest the GoDaddy app (Europe → Frankfurt, North America → US East)
-   and put its connection string in `DATABASE_URL`.
-2. In Node.js Hosting create the app from the `godaddy` branch (Git sync) or the zip, add the variables from
-   `dist/godaddy.env`, and deploy. The first start creates the tables and the starter catalogue.
+1. In Node.js Hosting create the app from the `godaddy` branch (Git sync) or the zip and enable its managed
+   MySQL database if the UI offers it (no `DATABASE_URL` needed).
+2. Add the variables from `dist/godaddy.env` and deploy. The first start creates the tables and the starter
+   catalogue; the runtime log shows `Connected to database server <version>`.
 3. Check the preview, publish, connect the domain, log in with an `ADMIN_PHONES` number and review **Admin → Settings**.
 
 Full details: [deploy/godaddy/README.md](../deploy/godaddy/README.md). After code changes, run the build again and
@@ -79,7 +79,8 @@ Create `./.env` (read by `docker-compose.prod.yml`):
 
 ```bash
 DOMAIN=example.com
-POSTGRES_PASSWORD=<long random password>
+MYSQL_PASSWORD=<long random password>
+MYSQL_ROOT_PASSWORD=<another long random password>
 ```
 
 Create the API config from the template and fill it in:
@@ -234,17 +235,17 @@ With `SHIPPING_PROVIDER=manual`, admins enter courier and AWB by hand.
 - **Logs:** `docker compose -f docker-compose.prod.yml logs -f backend` (JSON logs; secrets and OTPs are redacted).
 - **Backups:** schedule a daily dump and copy it off the server:
   ```bash
-  docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U shop shop | gzip > backup-$(date +%F).sql.gz
+  docker compose -f docker-compose.prod.yml exec -T mysql sh -c 'mysqldump --single-transaction --no-tablespaces -ushop -p"$MYSQL_PASSWORD" shop' | gzip > backup-$(date +%F).sql.gz
   ```
   With `STORAGE_DRIVER=local`, also back up the `uploads` volume (S3 is recommended instead).
 - **Background jobs** (unpaid order expiry, session clean-up) run inside the API. If you run more than
   one API container, set `RUN_JOBS=false` on all but one.
-- **Managed database:** to use Amazon RDS instead of the bundled PostgreSQL, remove the `postgres`
-  service and set `DATABASE_URL` in `backend/.env.production`.
+- **Managed database:** to use Amazon RDS for MySQL (8.0.16+) instead of the bundled MySQL, remove the `mysql`
+  service and set `DATABASE_URL=mysql://...` in `backend/.env.production`.
 
 ## Go-live checklist
 
-- [ ] `NODE_ENV=production`, strong `OTP_SECRET`, `SETTINGS_ENCRYPTION_KEY` and `POSTGRES_PASSWORD` (kept somewhere safe)
+- [ ] `NODE_ENV=production`, strong `OTP_SECRET`, `SETTINGS_ENCRYPTION_KEY` and `MYSQL_PASSWORD` (kept somewhere safe)
 - [ ] Admin → Settings reviewed section by section; test email received
 - [ ] SMS provider live (DLT approved) and a test login works on a real phone
 - [ ] Razorpay live keys + webhook; one real low-value payment made and refunded

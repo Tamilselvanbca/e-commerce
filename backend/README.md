@@ -1,4 +1,4 @@
-# Backend (Express + PostgreSQL)
+# Backend (Express + MySQL)
 
 REST API for the store. See the [project README](../README.md) for setup and [docs/API.md](../docs/API.md)
 for the endpoint reference.
@@ -23,3 +23,5 @@ npm test                 # needs the shop_test database
 | `test/` | `node:test` + supertest suite |
 
 Adding a migration: create `src/db/migrations/002_<name>.sql`. It runs automatically on the next start (or `npm run migrate`).
+MySQL commits each DDL statement immediately, so keep migrations small, and write SQL that MySQL 8.0.16+ and
+MariaDB 10.11 both accept (`src/db/pool.js` keeps PostgreSQL-style `$1` placeholders and maps error codes).

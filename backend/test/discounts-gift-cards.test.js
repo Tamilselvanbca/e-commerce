@@ -291,7 +291,7 @@ describe('buying gift cards online', () => {
 
   test('an unpaid gift card order expires cleanly', async () => {
     const res = await buy().expect(201);
-    await query(`UPDATE orders SET expires_at = now() - interval '1 minute' WHERE id = $1`, [res.body.order.id]);
+    await query(`UPDATE orders SET expires_at = NOW(3) - INTERVAL 1 MINUTE WHERE id = $1`, [res.body.order.id]);
     const { expireStaleOrders } = await import('../src/services/orders.js');
     assert.equal(await expireStaleOrders(), 1);
     const order = await agent.get(`/api/orders/${res.body.order.orderNumber}`).expect(200);

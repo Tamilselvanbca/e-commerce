@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import { queryOne } from '../db/pool.js';
+import { query, queryOne } from '../db/pool.js';
 import { normalizePhone } from '../lib/util.js';
 import { optionalText, parse } from '../lib/validate.js';
 import { publicFormLimiter } from '../middleware/security.js';
@@ -33,11 +34,15 @@ const enquirySchema = z.object({
 
 router.post('/', publicFormLimiter, async (req, res) => {
   const body = parse(enquirySchema, req.body);
+  const id = randomUUID();
+  await query(
+    `INSERT INTO bulk_enquiries (id, user_id, name, phone, email, company, message, items)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, req.user?.id ?? null, body.name, body.phone, body.email, body.company, body.message, JSON.stringify(body.items)],
+  );
   const row = await queryOne(
-    `INSERT INTO bulk_enquiries (user_id, name, phone, email, company, message, items)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id, name, phone, email, company, message, items, status, created_at`,
-    [req.user?.id ?? null, body.name, body.phone, body.email, body.company, body.message, JSON.stringify(body.items)],
+    'SELECT id, name, phone, email, company, message, items, status, created_at FROM bulk_enquiries WHERE id = $1',
+    [id],
   );
   const adminMail = adminBulkEnquiryEmail(row);
   if (adminMail) queueEmail(adminMail);
