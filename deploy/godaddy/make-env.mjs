@@ -5,7 +5,7 @@
 //   node --env-file=backend/.env deploy/godaddy/make-env.mjs [https://your-domain]
 // The file contains secrets: paste or upload it in the hosting UI, then delete it.
 import crypto from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,6 +25,10 @@ try {
   await loadSettings();
   const values = Object.entries(currentRawValues()).filter(([key]) => !SKIP.has(key));
   const quote = (v) => (/[\s#"'=]/.test(v) ? `"${v.replace(/["\\]/g, '\\$&')}"` : v);
+  // Keep the keys from an earlier run: they may already be set in the hosting UI, and
+  // secrets saved in Admin -> Settings are encrypted with SETTINGS_ENCRYPTION_KEY.
+  const previous = await readFile(target, 'utf8').catch(() => '');
+  const kept = (name) => new RegExp(`^${name}=([0-9a-f]{64})$`, 'm').exec(previous)?.[1];
   const random = () => crypto.randomBytes(32).toString('hex');
 
   const lines = [
@@ -34,9 +38,9 @@ try {
     '',
     '# No database variables: GoDaddy managed MySQL sets DB_HOST, DB_PORT, DB_NAME, DB_USER and DB_PASSWORD.',
     `FRONTEND_URL=${siteUrl}`,
-    '# New random keys for the live store. Keep a copy: secrets saved in Admin -> Settings depend on SETTINGS_ENCRYPTION_KEY.',
-    `OTP_SECRET=${random()}`,
-    `SETTINGS_ENCRYPTION_KEY=${random()}`,
+    '# Random keys for the live store. Keep a copy: secrets saved in Admin -> Settings depend on SETTINGS_ENCRYPTION_KEY.',
+    `OTP_SECRET=${kept('OTP_SECRET') ?? random()}`,
+    `SETTINGS_ENCRYPTION_KEY=${kept('SETTINGS_ENCRYPTION_KEY') ?? random()}`,
     `ADMIN_PHONES=${config.auth.adminPhones.join(',')}`,
     '',
     '# Store settings (editable later in Admin -> Settings).',
@@ -45,7 +49,8 @@ try {
   ];
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, lines.join('\n'), { mode: 0o600 });
-  console.log(`Wrote ${target} (${values.length} store settings). Add the values in GoDaddy, then delete the file.`);
+  const reused = kept('OTP_SECRET') && kept('SETTINGS_ENCRYPTION_KEY') ? 'kept the existing keys' : 'new random keys';
+  console.log(`Wrote ${target} (${values.length} store settings, ${reused}). Add the values in GoDaddy, then keep the file somewhere safe.`);
 } finally {
   await pool.end();
 }
