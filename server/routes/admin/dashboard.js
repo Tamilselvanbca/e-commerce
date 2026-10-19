@@ -7,46 +7,71 @@ import { listOrders } from '../../services/orders.js';
 
 const router = Router();
 
+/** UTC offset of `timeZone` at `date`, in minutes (330 for Asia/Kolkata). */
+function offsetMinutes(timeZone, date) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+      .formatToParts(date)
+      .map((p) => [p.type, p.value]),
+  );
+  const asUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second);
+  return Math.round((asUtc - Math.floor(date.getTime() / 1000) * 1000) / 60_000);
+}
+
+/** "+05:30" style offset for MySQL CONVERT_TZ (works without the server's time zone tables). */
+const offsetSql = (minutes) =>
+  `${minutes < 0 ? '-' : '+'}${String(Math.floor(Math.abs(minutes) / 60)).padStart(2, '0')}:${String(Math.abs(minutes) % 60).padStart(2, '0')}`;
+
 router.get('/', async (req, res) => {
   const { days } = parse(z.object({ days: z.coerce.number().int().min(7).max(365).default(30) }), req.query);
-  const tz = config.store.timezone;
 
   // Range = the last `days` calendar days in the store's timezone, including today.
-  const range = await queryOne(
-    `SELECT (date_trunc('day', now() AT TIME ZONE $1) - make_interval(days => $2 - 1)) AT TIME ZONE $1 AS from_ts,
-            now() AS to_ts,
-            (date_trunc('day', now() AT TIME ZONE $1) - make_interval(days => 2 * $2 - 1)) AT TIME ZONE $1 AS prev_from_ts`,
-    [tz, days],
-  );
-  const { fromTs, toTs, prevFromTs } = range;
+  // (Uses today's UTC offset; exact for zones without daylight saving, such as India.)
+  const now = new Date();
+  const offset = offsetMinutes(config.store.timezone, now);
+  const local = new Date(now.getTime() + offset * 60_000);
+  const localMidnight = (daysBack) =>
+    new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() - daysBack) - offset * 60_000);
+  const fromTs = localMidnight(days - 1);
+  const prevFromTs = localMidnight(2 * days - 1);
+  const toTs = now;
+  const tz = offsetSql(offset);
 
-  const [totals, previous, newCustomers, pending, byDay, byStatus, topProducts, lowStock, gatewaySplit, recent] = await Promise.all([
+  const [totals, previous, newCustomers, pending, byDayRows, byStatus, topProducts, lowStock, gatewaySplit, recent] = await Promise.all([
     queryOne(
-      `SELECT coalesce(sum(total) FILTER (WHERE payment_status = 'paid'), 0) AS revenue,
+      `SELECT coalesce(sum(CASE WHEN payment_status = 'paid' THEN total ELSE 0 END), 0) AS revenue,
               count(*) AS orders,
-              count(*) FILTER (WHERE payment_status = 'paid') AS paid_orders
+              count(CASE WHEN payment_status = 'paid' THEN 1 END) AS paid_orders
          FROM orders WHERE created_at >= $1 AND created_at <= $2`,
       [fromTs, toTs],
     ),
     queryOne(
-      `SELECT coalesce(sum(total) FILTER (WHERE payment_status = 'paid'), 0) AS revenue,
-              count(*) FILTER (WHERE payment_status = 'paid') AS orders
+      `SELECT coalesce(sum(CASE WHEN payment_status = 'paid' THEN total ELSE 0 END), 0) AS revenue,
+              count(CASE WHEN payment_status = 'paid' THEN 1 END) AS orders
          FROM orders WHERE created_at >= $1 AND created_at < $2`,
       [prevFromTs, fromTs],
     ),
-    queryOne(`SELECT count(*) FROM users WHERE role = 'customer' AND created_at >= $1`, [fromTs]),
-    queryOne(`SELECT count(*) FROM orders WHERE status IN ('confirmed', 'processing')`),
+    queryOne(`SELECT count(*) AS count FROM users WHERE role = 'customer' AND created_at >= $1`, [fromTs]),
+    queryOne(`SELECT count(*) AS count FROM orders WHERE status IN ('confirmed', 'processing')`),
     query(
-      `SELECT to_char(d.day, 'YYYY-MM-DD') AS date,
-              coalesce(sum(o.total) FILTER (WHERE o.payment_status = 'paid'), 0) AS revenue,
-              count(o.id) AS orders
-         FROM generate_series(($1::timestamptz AT TIME ZONE $3)::date, ($2::timestamptz AT TIME ZONE $3)::date, interval '1 day') AS d(day)
-         LEFT JOIN orders o ON (o.created_at AT TIME ZONE $3)::date = d.day::date
-        GROUP BY d.day ORDER BY d.day`,
+      `SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', $3), '%Y-%m-%d') AS day,
+              coalesce(sum(CASE WHEN payment_status = 'paid' THEN total ELSE 0 END), 0) AS revenue,
+              count(*) AS orders
+         FROM orders WHERE created_at >= $1 AND created_at <= $2
+        GROUP BY day ORDER BY day`,
       [fromTs, toTs, tz],
     ),
     query(
-      `SELECT status, count(*) FROM orders WHERE created_at >= $1 GROUP BY status ORDER BY count(*) DESC`,
+      `SELECT status, count(*) AS count FROM orders WHERE created_at >= $1 GROUP BY status ORDER BY count DESC`,
       [fromTs],
     ),
     query(
@@ -72,6 +97,16 @@ router.get('/', async (req, res) => {
     listOrders({ page: 1, pageSize: 8, admin: true }),
   ]);
 
+  // One entry per calendar day, including days without orders.
+  const byDate = new Map(byDayRows.map((r) => [r.day, r]));
+  const revenueByDay = Array.from({ length: days }, (_, i) => {
+    const date = new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() - (days - 1 - i)))
+      .toISOString()
+      .slice(0, 10);
+    const row = byDate.get(date);
+    return { date, revenue: row?.revenue ?? 0, orders: row?.orders ?? 0 };
+  });
+
   res.json({
     range: { from: fromTs, to: toTs, days },
     totals: {
@@ -84,7 +119,7 @@ router.get('/', async (req, res) => {
       previousRevenue: previous.revenue,
       previousOrders: previous.orders,
     },
-    revenueByDay: byDay,
+    revenueByDay,
     ordersByStatus: byStatus,
     topProducts,
     lowStock,

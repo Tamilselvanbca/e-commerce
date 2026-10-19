@@ -43,6 +43,24 @@ class Params {
     this.values.push(value);
     return `$${this.values.length}`;
   }
+  /** `IN (...)` list for an array (callers guarantee at least one value). */
+  list(values) {
+    return values.map((v) => this.add(v)).join(', ');
+  }
+}
+
+/**
+ * Full-text query for MySQL boolean mode: every word must appear, as a word
+ * prefix ("lad" finds "laddu"). Words below InnoDB's 3-character token minimum
+ * and boolean-mode operators are dropped; returns null when nothing is left.
+ */
+function fullTextQuery(q) {
+  const words = q
+    .toLowerCase()
+    .replace(/[+\-<>()~*"@]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3);
+  return words.length ? words.map((w) => `+${w}*`).join(' ') : null;
 }
 
 /** Returns the ids of the category with `slug` and all of its descendants, or null if missing. */
@@ -58,34 +76,34 @@ async function categoryTreeIds(slug) {
   return rows.length ? rows.map((r) => r.id) : null;
 }
 
-// Shared SELECT list for product cards. Expects the products table aliased as `p`.
-const SUMMARY_SELECT = `
+// Shared SELECT list for product cards. Expects the products table aliased as `p`
+// and SUMMARY_JOINS with the same variant filter. Correlated subqueries and grouped
+// derived tables keep it portable across MySQL 8.0 and MariaDB (no LATERAL joins).
+const summarySelect = (variantFilter = 'v.is_active') => `
   p.id, p.name, p.slug, p.is_featured, p.status, p.created_at, p.updated_at,
   c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
-  agg.min_price, agg.max_price, agg.total_stock, agg.variant_count,
-  cheapest.compare_at_price,
-  img.url AS image_url,
+  agg.min_price, agg.max_price, coalesce(agg.total_stock, 0) AS total_stock, coalesce(agg.variant_count, 0) AS variant_count,
+  (SELECT v.compare_at_price FROM product_variants v
+    WHERE v.product_id = p.id AND ${variantFilter}
+    ORDER BY v.price, v.sort_order LIMIT 1) AS compare_at_price,
+  (SELECT i.url FROM product_images i WHERE i.product_id = p.id ORDER BY i.sort_order LIMIT 1) AS image_url,
   rv.rating_avg, rv.rating_count`;
+const SUMMARY_SELECT = summarySelect();
 
+// Products without matching variants get NULL aggregates; callers filter on variant_count.
 const SUMMARY_JOINS = (variantFilter = 'v.is_active') => `
   LEFT JOIN categories c ON c.id = p.category_id
-  JOIN LATERAL (
-    SELECT min(v.price) AS min_price, max(v.price) AS max_price,
+  LEFT JOIN (
+    SELECT v.product_id, min(v.price) AS min_price, max(v.price) AS max_price,
            coalesce(sum(v.stock), 0) AS total_stock, count(*) AS variant_count
-      FROM product_variants v WHERE v.product_id = p.id AND ${variantFilter}
-  ) agg ON true
-  LEFT JOIN LATERAL (
-    SELECT v.compare_at_price FROM product_variants v
-     WHERE v.product_id = p.id AND ${variantFilter}
-     ORDER BY v.price, v.sort_order LIMIT 1
-  ) cheapest ON true
-  LEFT JOIN LATERAL (
-    SELECT i.url FROM product_images i WHERE i.product_id = p.id ORDER BY i.sort_order LIMIT 1
-  ) img ON true
-  LEFT JOIN LATERAL (
-    SELECT round(avg(r.rating)::numeric, 1) AS rating_avg, count(*) AS rating_count
-      FROM reviews r WHERE r.product_id = p.id AND r.status = 'published'
-  ) rv ON true`;
+      FROM product_variants v WHERE ${variantFilter}
+     GROUP BY v.product_id
+  ) agg ON agg.product_id = p.id
+  LEFT JOIN (
+    SELECT r.product_id, round(avg(r.rating), 1) AS rating_avg, count(*) AS rating_count
+      FROM reviews r WHERE r.status = 'published'
+     GROUP BY r.product_id
+  ) rv ON rv.product_id = p.id`;
 
 export function toSummary(r) {
   return {
@@ -121,22 +139,28 @@ export async function listProducts(f) {
   if (f.category) {
     const ids = await categoryTreeIds(f.category);
     if (!ids) return empty;
-    scope.push(`p.category_id = ANY(${p.add(ids)}::uuid[])`);
+    scope.push(`p.category_id IN (${p.list(ids)})`);
   }
   let rankExpr = null;
   if (f.q) {
-    const qParam = p.add(f.q);
+    // Name substring match, plus full-text word-prefix matching on name and description.
     const likeParam = p.add(`%${f.q.replace(/[%_\\]/g, '\\$&')}%`);
-    scope.push(`(p.search @@ websearch_to_tsquery('english', ${qParam}) OR p.name ILIKE ${likeParam})`);
-    rankExpr = `ts_rank(p.search, websearch_to_tsquery('english', ${qParam}))`;
+    const words = fullTextQuery(f.q);
+    if (words) {
+      const ftParam = p.add(words);
+      scope.push(`(MATCH(p.name, p.description) AGAINST (${ftParam} IN BOOLEAN MODE) OR p.name LIKE ${likeParam})`);
+      rankExpr = `(p.name LIKE ${likeParam}) DESC, MATCH(p.name, p.description) AGAINST (${ftParam} IN BOOLEAN MODE) DESC`;
+    } else {
+      scope.push(`p.name LIKE ${likeParam}`);
+    }
   }
   if (f.featured) scope.push('p.is_featured');
   const scopeWhere = scope.join(' AND ');
 
   // Variant-level filters: the product matches if at least one active variant satisfies all of them.
   const vf = ['v.is_active'];
-  if (f.sizes?.length) vf.push(`v.size = ANY(${p.add(f.sizes)}::text[])`);
-  if (f.colors?.length) vf.push(`v.color = ANY(${p.add(f.colors)}::text[])`);
+  if (f.sizes?.length) vf.push(`v.size IN (${p.list(f.sizes)})`);
+  if (f.colors?.length) vf.push(`v.color IN (${p.list(f.colors)})`);
   if (f.minPrice != null) vf.push(`v.price >= ${p.add(f.minPrice)}`);
   if (f.maxPrice != null) vf.push(`v.price <= ${p.add(f.maxPrice)}`);
   if (f.inStock) vf.push('v.stock > 0');
@@ -149,13 +173,14 @@ export async function listProducts(f) {
     price_desc: 'agg.min_price DESC, p.id',
     popular: 'coalesce(sold.units, 0) DESC, p.created_at DESC, p.id',
     rating: 'coalesce(rv.rating_avg, 0) DESC, rv.rating_count DESC, p.created_at DESC, p.id',
-    relevance: rankExpr ? `${rankExpr} DESC, p.created_at DESC, p.id` : 'p.created_at DESC, p.id',
+    relevance: rankExpr ? `${rankExpr}, p.created_at DESC, p.id` : 'p.created_at DESC, p.id',
   }[sort];
   const popularJoin = sort === 'popular'
-    ? `LEFT JOIN LATERAL (
-         SELECT sum(oi.quantity) AS units FROM order_items oi JOIN orders o ON o.id = oi.order_id
-          WHERE oi.product_id = p.id AND o.payment_status = 'paid'
-       ) sold ON true`
+    ? `LEFT JOIN (
+         SELECT oi.product_id, sum(oi.quantity) AS units FROM order_items oi JOIN orders o ON o.id = oi.order_id
+          WHERE o.payment_status = 'paid'
+          GROUP BY oi.product_id
+       ) sold ON sold.product_id = p.id`
     : '';
 
   const where = `${scopeWhere} AND ${variantMatch} AND agg.variant_count > 0`;
@@ -193,7 +218,7 @@ export async function listProducts(f) {
   if (total === 0 && f.page > 1) {
     // Out-of-range page: still report the real total.
     const { count } = await queryOne(
-      `SELECT count(*) FROM products p ${SUMMARY_JOINS()} WHERE ${where}`,
+      `SELECT count(*) AS count FROM products p ${SUMMARY_JOINS()} WHERE ${where}`,
       p.values.slice(0, -2),
     );
     return { ...empty, total: count, totalPages: Math.ceil(count / f.pageSize), facets: { sizes, colors, priceRange } };
@@ -235,9 +260,9 @@ export async function getProduct({ slug, id, admin = false }) {
         ORDER BY sort_order, price, id`,
       [row.id],
     ),
-    query('SELECT id, url, storage_key AS key, alt, sort_order FROM product_images WHERE product_id = $1 ORDER BY sort_order, created_at', [row.id]),
+    query('SELECT id, url, storage_key AS `key`, alt, sort_order FROM product_images WHERE product_id = $1 ORDER BY sort_order, created_at', [row.id]),
     queryOne(
-      `SELECT round(avg(rating)::numeric, 1) AS average, count(*) AS count FROM reviews WHERE product_id = $1 AND status = 'published'`,
+      `SELECT round(avg(rating), 1) AS average, count(*) AS count FROM reviews WHERE product_id = $1 AND status = 'published'`,
       [row.id],
     ),
   ]);
@@ -278,8 +303,8 @@ export async function relatedProducts(productId, categoryId, limit = 8) {
     `SELECT ${SUMMARY_SELECT}
        FROM products p ${SUMMARY_JOINS()}
       WHERE p.status = 'active' AND p.id <> $1 AND agg.variant_count > 0
-        AND ($2::uuid IS NULL OR p.category_id = $2)
-      ORDER BY (p.category_id IS NOT DISTINCT FROM $2) DESC, p.is_featured DESC, p.created_at DESC
+        AND ($2 IS NULL OR p.category_id = $2)
+      ORDER BY (p.category_id <=> $2) DESC, p.is_featured DESC, p.created_at DESC
       LIMIT $3`,
     [productId, categoryId, limit],
   );
@@ -306,4 +331,4 @@ export async function listCategories({ admin = false } = {}) {
   return admin ? result : result.filter((c) => c.isActive).map(({ isActive: _omit, ...c }) => c);
 }
 
-export { SUMMARY_SELECT, SUMMARY_JOINS };
+export { SUMMARY_SELECT, SUMMARY_JOINS, summarySelect };

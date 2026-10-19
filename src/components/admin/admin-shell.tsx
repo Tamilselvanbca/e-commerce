@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { LogoImage } from "@/components/logo";
 import { useAuth, useStoreConfig } from "@/components/providers";
 import { Button, ButtonLink, PageLoader } from "@/components/ui";
 import { cn } from "@/lib/format";
@@ -222,9 +223,16 @@ function SidebarContent({
   return (
     <>
       <div className="flex h-14 shrink-0 items-center border-b border-zinc-100 px-5 lg:h-16">
-        <Link href="/admin" onClick={onNavigate} className="min-w-0 rounded-md focus-visible:outline-2 focus-visible:outline-zinc-900">
-          <span className="block truncate text-sm font-semibold text-zinc-900">{storeName}</span>
-          <span className="block text-xs text-zinc-500">Admin</span>
+        <Link
+          href="/admin"
+          onClick={onNavigate}
+          className="flex min-w-0 items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-zinc-900"
+        >
+          <LogoImage name="" className="h-11 shrink-0" />
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-semibold text-zinc-900">{storeName}</span>
+            <span className="block text-xs text-zinc-500">Admin</span>
+          </span>
         </Link>
       </div>
 

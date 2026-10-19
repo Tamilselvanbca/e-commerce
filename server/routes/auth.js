@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { queryOne } from '../db/pool.js';
+import { pool, query, queryOne } from '../db/pool.js';
 import {
   assertNotBlocked,
   createSession,
@@ -36,21 +36,22 @@ router.post('/otp/verify', otpLimiter, async (req, res) => {
 
   const makeAdmin = config.auth.adminPhones.some((p) => requirePhoneSafe(p) === phone);
   // Upsert: create the user on first login; promote listed admin phones.
-  const user = await queryOne(
+  // MySQL reports 1 affected row for an insert and 2 for an update.
+  const { rowCount } = await pool.query(
     `INSERT INTO users (phone, name, role, last_login_at)
-     VALUES ($1, $2, $3, now())
-     ON CONFLICT (phone) DO UPDATE SET
-       last_login_at = now(),
-       name = coalesce(users.name, EXCLUDED.name),
-       role = CASE WHEN $4 THEN 'admin' ELSE users.role END
-     RETURNING id, phone, name, email, role, is_blocked, created_at, (xmax = 0) AS is_new`,
+     VALUES ($1, $2, $3, NOW(3))
+     ON DUPLICATE KEY UPDATE
+       last_login_at = NOW(3),
+       name = coalesce(name, VALUES(name)),
+       role = CASE WHEN $4 THEN 'admin' ELSE role END`,
     [phone, body.name, makeAdmin ? 'admin' : 'customer', makeAdmin],
   );
+  const user = await queryOne('SELECT id, phone, name, email, role, is_blocked, created_at FROM users WHERE phone = $1', [phone]);
   assertNotBlocked(user);
 
   await createSession(res, user.id, req);
   await mergeGuestCart(req, res, user.id);
-  res.json({ user: publicUser(user), isNewUser: user.isNew });
+  res.json({ user: publicUser(user), isNewUser: rowCount === 1 });
 });
 
 function requirePhoneSafe(p) {
@@ -74,14 +75,14 @@ const profileSchema = z.object({
 
 router.patch('/me', requireAuth, async (req, res) => {
   const body = parse(profileSchema, req.body);
-  const user = await queryOne(
+  await query(
     `UPDATE users SET
        name = CASE WHEN $2 THEN $3 ELSE name END,
        email = CASE WHEN $4 THEN $5 ELSE email END
-     WHERE id = $1
-     RETURNING id, phone, name, email, role, created_at`,
+     WHERE id = $1`,
     [req.user.id, body.name !== undefined, body.name ?? null, body.email !== undefined, body.email ? body.email.toLowerCase() : null],
   );
+  const user = await queryOne('SELECT id, phone, name, email, role, created_at FROM users WHERE id = $1', [req.user.id]);
   res.json({ user: publicUser(user) });
 });
 

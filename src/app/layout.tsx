@@ -46,8 +46,11 @@ async function loadConfig(): Promise<StoreConfig> {
 export async function generateMetadata(): Promise<Metadata> {
   const config = await loadConfig();
   return {
+    // Absolute URLs for the link-preview image (app/opengraph-image.png) in WhatsApp and social shares.
+    metadataBase: new URL(process.env.SITE_URL ?? "http://localhost:3000"),
     title: { default: config.storeName, template: `%s | ${config.storeName}` },
     description: `Traditional sweets and savouries from ${config.storeName}: laddus, mithai, murukku and festive gift boxes, freshly made and delivered across India. Bulk orders on WhatsApp.`,
+    openGraph: { siteName: config.storeName, type: "website" },
   };
 }
 

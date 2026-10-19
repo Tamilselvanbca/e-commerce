@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { pool, query, queryOne, transaction } from '../db/pool.js';
 import { AppError, badRequest, conflict, notFound } from '../lib/errors.js';
@@ -112,10 +113,10 @@ export async function listOrders({ userId, status, paymentStatus, q, from, to, p
   if (status) where.push(`o.status = ${add(status)}`);
   if (paymentStatus) where.push(`o.payment_status = ${add(paymentStatus)}`);
   if (from) where.push(`o.created_at >= ${add(from)}`);
-  if (to) where.push(`o.created_at < ${add(to)}::date + 1`);
+  if (to) where.push(`o.created_at < DATE_ADD(${add(to)}, INTERVAL 1 DAY)`);
   if (q) {
     const like = add(`%${q.replace(/[%_\\]/g, '\\$&')}%`);
-    where.push(`(o.order_number ILIKE ${like} OR u.phone ILIKE ${like} OR u.name ILIKE ${like} OR o.email ILIKE ${like})`);
+    where.push(`(o.order_number LIKE ${like} OR u.phone LIKE ${like} OR u.name LIKE ${like} OR o.email LIKE ${like})`);
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const rows = await query(
@@ -242,12 +243,41 @@ export async function addHistory(orderId, status, note, createdBy = null, db = p
   );
 }
 
+/**
+ * Inserts a pending order (`columns` are trusted column names → values) with a new
+ * id, order number and payment deadline. Returns { id, orderNumber }.
+ */
+async function insertOrder(db, columns) {
+  for (let attempt = 0; ; attempt++) {
+    const row = { id: randomUUID(), order_number: generateOrderNumber(), status: 'pending', payment_status: 'pending', currency: config.store.currency, ...columns };
+    const names = Object.keys(row);
+    // Savepoint so an order-number collision can be retried without aborting the transaction.
+    await db.query('SAVEPOINT order_insert');
+    try {
+      await query(
+        `INSERT INTO orders (${names.join(', ')}, expires_at)
+         VALUES (${names.map((_, i) => `$${i + 1}`).join(', ')}, NOW(3) + INTERVAL $${names.length + 1} MINUTE)`,
+        [...Object.values(row), config.store.paymentTimeoutMinutes],
+        db,
+      );
+      return { id: row.id, orderNumber: row.order_number };
+    } catch (err) {
+      // Retry on the (very unlikely) order number collision.
+      if (err.code === '23505' && err.constraint === 'orders_order_number_key' && attempt < 5) {
+        await db.query('ROLLBACK TO SAVEPOINT order_insert');
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 /** Returns reserved stock of an order to inventory. */
 async function releaseStock(orderId, db) {
   await query(
-    `UPDATE product_variants v SET stock = v.stock + oi.quantity
-       FROM order_items oi
-      WHERE oi.order_id = $1 AND oi.variant_id = v.id`,
+    `UPDATE product_variants v JOIN order_items oi ON oi.variant_id = v.id
+        SET v.stock = v.stock + oi.quantity
+      WHERE oi.order_id = $1`,
     [orderId],
     db,
   );
@@ -298,7 +328,7 @@ export async function createOrderFromCart({ user, cartId, address, email, notes,
          JOIN products p ON p.id = v.product_id
         WHERE ci.cart_id = $1
         ORDER BY v.id
-        FOR UPDATE OF v`,
+        FOR UPDATE`,
       [cartId],
       db,
     );
@@ -358,35 +388,23 @@ export async function createOrderFromCart({ user, cartId, address, email, notes,
       country: address.country,
     };
 
-    let order;
-    for (let attempt = 0; !order; attempt++) {
-      // Savepoint so an order-number collision can be retried without aborting the transaction.
-      await db.query('SAVEPOINT order_insert');
-      try {
-        order = await queryOne(
-          `INSERT INTO orders (order_number, user_id, status, payment_status, payment_gateway, currency,
-                               subtotal, shipping_fee, discount, total, email, phone, shipping_address, notes, expires_at,
-                               discount_id, discount_code, discount_title, gift_card_id, gift_card_amount)
-           VALUES ($1, $2, 'pending', 'pending', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                   now() + make_interval(mins => $13), $14, $15, $16, $17, $18)
-           RETURNING id, order_number`,
-          [
-            generateOrderNumber(), user.id, gateway, config.store.currency,
-            subtotal, shippingFee, discountAmount, total,
-            email, user.phone, JSON.stringify(shippingAddress), notes, config.store.paymentTimeoutMinutes,
-            discount?.id ?? null, discount?.code ?? null, discount?.title ?? null, giftCard?.id ?? null, giftCardAmount,
-          ],
-          db,
-        );
-      } catch (err) {
-        // Retry on the (very unlikely) order number collision.
-        if (err.code === '23505' && err.constraint === 'orders_order_number_key' && attempt < 5) {
-          await db.query('ROLLBACK TO SAVEPOINT order_insert');
-          continue;
-        }
-        throw err;
-      }
-    }
+    const order = await insertOrder(db, {
+      user_id: user.id,
+      payment_gateway: gateway,
+      subtotal,
+      shipping_fee: shippingFee,
+      discount: discountAmount,
+      total,
+      email,
+      phone: user.phone,
+      shipping_address: JSON.stringify(shippingAddress),
+      notes,
+      discount_id: discount?.id ?? null,
+      discount_code: discount?.code ?? null,
+      discount_title: discount?.title ?? null,
+      gift_card_id: giftCard?.id ?? null,
+      gift_card_amount: giftCardAmount,
+    });
 
     for (const l of lines) {
       await query(
@@ -414,27 +432,18 @@ export async function createOrderFromCart({ user, cartId, address, email, notes,
  */
 export async function createGiftCardOrder({ user, email, gateway, amount, recipientName, recipientEmail, senderName, message }) {
   const orderId = await transaction(async (db) => {
-    let order;
-    for (let attempt = 0; !order; attempt++) {
-      await db.query('SAVEPOINT order_insert');
-      try {
-        order = await queryOne(
-          `INSERT INTO orders (order_number, user_id, kind, status, payment_status, payment_gateway, currency,
-                               subtotal, shipping_fee, discount, total, email, phone, shipping_address, expires_at)
-           VALUES ($1, $2, 'gift_card', 'pending', 'pending', $3, $4, $5, 0, 0, $5, $6, $7, NULL,
-                   now() + make_interval(mins => $8))
-           RETURNING id, order_number`,
-          [generateOrderNumber(), user.id, gateway, config.store.currency, amount, email, user.phone, config.store.paymentTimeoutMinutes],
-          db,
-        );
-      } catch (err) {
-        if (err.code === '23505' && err.constraint === 'orders_order_number_key' && attempt < 5) {
-          await db.query('ROLLBACK TO SAVEPOINT order_insert');
-          continue;
-        }
-        throw err;
-      }
-    }
+    const order = await insertOrder(db, {
+      user_id: user.id,
+      kind: 'gift_card',
+      payment_gateway: gateway,
+      subtotal: amount,
+      shipping_fee: 0,
+      discount: 0,
+      total: amount,
+      email,
+      phone: user.phone,
+      shipping_address: null,
+    });
     await query(
       `INSERT INTO order_items (order_id, product_name, sku, unit_price, quantity, line_total, gift_card_details)
        VALUES ($1, $2, 'GIFT-CARD', $3, 1, $3, $4)`,
@@ -522,8 +531,8 @@ export async function markOrderPaid({ orderId, gateway, gatewayOrderId, gatewayP
 
     // Remove the purchased items from the customer's cart.
     await query(
-      `DELETE FROM cart_items ci USING carts c
-        WHERE ci.cart_id = c.id AND c.user_id = $1
+      `DELETE ci FROM cart_items ci JOIN carts c ON c.id = ci.cart_id
+        WHERE c.user_id = $1
           AND ci.variant_id IN (SELECT variant_id FROM order_items WHERE order_id = $2)`,
       [o.userId, o.id],
       db,
@@ -547,23 +556,22 @@ export async function markOrderPaid({ orderId, gateway, gatewayOrderId, gatewayP
 
 /** Records a failed payment attempt. The order stays payable until it expires. */
 export async function markPaymentFailed({ gateway, gatewayOrderId, gatewayPaymentId, error, raw }) {
-  const payment = await queryOne(
+  await query(
     `UPDATE payments SET status = CASE WHEN status = 'paid' THEN status ELSE 'failed' END,
             gateway_payment_id = coalesce($3, gateway_payment_id), error = $4, raw = coalesce($5, raw)
-      WHERE gateway = $1 AND gateway_order_id = $2
-      RETURNING order_id, status`,
+      WHERE gateway = $1 AND gateway_order_id = $2`,
     [gateway, gatewayOrderId, gatewayPaymentId ?? null, error?.slice(0, 500) ?? 'Payment failed', raw ? JSON.stringify(raw) : null],
   );
+  const payment = await queryOne('SELECT order_id, status FROM payments WHERE gateway = $1 AND gateway_order_id = $2', [gateway, gatewayOrderId]);
   if (!payment) return null;
   if (payment.status === 'failed') {
     // Only orders still awaiting payment are affected; the customer can retry until expiry.
-    const pending = await queryOne(
+    const { rowCount } = await pool.query(
       `UPDATE orders SET payment_status = 'failed'
-        WHERE id = $1 AND status = 'pending' AND payment_status IN ('pending', 'failed')
-        RETURNING id`,
+        WHERE id = $1 AND status = 'pending' AND payment_status IN ('pending', 'failed')`,
       [payment.orderId],
     );
-    if (pending) await addHistory(payment.orderId, 'pending', `Payment attempt failed: ${error ?? 'unknown reason'}`);
+    if (rowCount > 0) await addHistory(payment.orderId, 'pending', `Payment attempt failed: ${error ?? 'unknown reason'}`);
   }
   return payment.orderId;
 }
@@ -608,8 +616,8 @@ export async function adminUpdateStatus(orderNumber, nextStatus, note, adminId) 
       await addHistory(o.id, nextStatus, note, adminId, db);
       if (nextStatus === 'shipped') {
         await query(
-          `INSERT INTO shipments (order_id, provider, shipped_at) VALUES ($1, 'manual', now())
-           ON CONFLICT (order_id) DO UPDATE SET shipped_at = coalesce(shipments.shipped_at, now())`,
+          `INSERT INTO shipments (order_id, provider, shipped_at) VALUES ($1, 'manual', NOW(3))
+           ON DUPLICATE KEY UPDATE shipped_at = coalesce(shipped_at, VALUES(shipped_at))`,
           [o.id],
           db,
         );
@@ -643,14 +651,14 @@ export async function recordShipment(orderNumber, { provider = 'manual', courier
     }
     await query(
       `INSERT INTO shipments (order_id, provider, courier, awb, tracking_url, provider_order_id, provider_shipment_id, raw, shipped_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
-       ON CONFLICT (order_id) DO UPDATE SET
-         provider = EXCLUDED.provider, courier = EXCLUDED.courier, awb = EXCLUDED.awb,
-         tracking_url = EXCLUDED.tracking_url,
-         provider_order_id = coalesce(EXCLUDED.provider_order_id, shipments.provider_order_id),
-         provider_shipment_id = coalesce(EXCLUDED.provider_shipment_id, shipments.provider_shipment_id),
-         raw = coalesce(EXCLUDED.raw, shipments.raw),
-         shipped_at = coalesce(shipments.shipped_at, now())`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(3))
+       ON DUPLICATE KEY UPDATE
+         provider = VALUES(provider), courier = VALUES(courier), awb = VALUES(awb),
+         tracking_url = VALUES(tracking_url),
+         provider_order_id = coalesce(VALUES(provider_order_id), provider_order_id),
+         provider_shipment_id = coalesce(VALUES(provider_shipment_id), provider_shipment_id),
+         raw = coalesce(VALUES(raw), raw),
+         shipped_at = coalesce(shipped_at, VALUES(shipped_at))`,
       [o.id, provider, courier, awb, trackingUrl ?? null, providerOrderId ?? null, providerShipmentId ?? null, raw ? JSON.stringify(raw) : null],
       db,
     );

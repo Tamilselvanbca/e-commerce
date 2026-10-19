@@ -6,6 +6,7 @@
 //   npm run seed -- --demo       also create demo customers, orders and reviews (dashboard data)
 //   npm run db:reset             wipe the whole database, then seed the catalog
 // `seedStore()` is also called on first start by hosts without shell access.
+import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -299,7 +300,7 @@ async function seedAdmins() {
     if (!phone) continue;
     await query(
       `INSERT INTO users (phone, name, role) VALUES ($1, 'Store Admin', 'admin')
-       ON CONFLICT (phone) DO UPDATE SET role = 'admin'`,
+       ON DUPLICATE KEY UPDATE role = 'admin'`,
       [phone],
     );
     console.log(`Admin user: ${phone}`);
@@ -307,7 +308,7 @@ async function seedAdmins() {
 }
 
 async function seedCatalog() {
-  const { count } = await queryOne('SELECT count(*) FROM products');
+  const { count } = await queryOne('SELECT count(*) AS count FROM products');
   if (count > 0 && !FORCE) {
     console.log(`Catalog already has ${count} products; skipping (use --force to replace).`);
     return;
@@ -327,20 +328,22 @@ async function seedCatalog() {
 
     const catIds = {};
     for (const [i, c] of CATEGORIES.entries()) {
-      const row = await queryOne(
-        `INSERT INTO categories (name, slug, description, parent_id, sort_order) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-        [c.name, c.slug, c.description ?? null, c.parent ? catIds[c.parent] : null, i],
+      const id = randomUUID();
+      await query(
+        'INSERT INTO categories (id, name, slug, description, parent_id, sort_order) VALUES ($1, $2, $3, $4, $5, $6)',
+        [id, c.name, c.slug, c.description ?? null, c.parent ? catIds[c.parent] : null, i],
         db,
       );
-      catIds[c.slug] = row.id;
+      catIds[c.slug] = id;
     }
 
     for (const [pi, p] of PRODUCTS.entries()) {
       const slug = slugify(p.name);
-      const product = await queryOne(
-        `INSERT INTO products (name, slug, description, category_id, is_featured, created_at)
-         VALUES ($1, $2, $3, $4, $5, now() - make_interval(days => $6)) RETURNING id`,
-        [p.name, slug, p.description, catIds[p.cat], Boolean(p.featured), PRODUCTS.length - pi],
+      const product = { id: randomUUID() };
+      await query(
+        `INSERT INTO products (id, name, slug, description, category_id, is_featured, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(3) - INTERVAL $7 DAY)`,
+        [product.id, p.name, slug, p.description, catIds[p.cat], Boolean(p.featured), PRODUCTS.length - pi],
         db,
       );
 
@@ -394,11 +397,12 @@ async function seedDemoOrders() {
   ];
   const users = [];
   for (const [phone, name, email, place] of customers) {
-    const u = await queryOne(
-      `INSERT INTO users (phone, name, email, created_at) VALUES ($1, $2, $3, now() - make_interval(days => $4))
-       ON CONFLICT (phone) DO UPDATE SET name = EXCLUDED.name RETURNING id, phone, name, email`,
+    await query(
+      `INSERT INTO users (phone, name, email, created_at) VALUES ($1, $2, $3, NOW(3) - INTERVAL $4 DAY)
+       ON DUPLICATE KEY UPDATE name = VALUES(name)`,
       [phone, name, email, Math.floor(rand() * 40)],
     );
+    const u = await queryOne('SELECT id, phone, name, email FROM users WHERE phone = $1', [phone]);
     users.push({ ...u, place });
   }
   const variants = await query(
@@ -423,17 +427,17 @@ async function seedDemoOrders() {
     const gateway = international ? 'stripe' : rand() < 0.9 ? 'razorpay' : 'stripe';
     const address = { fullName: user.name, phone: user.phone, line1: `${10 + n}, Temple Street`, line2: null, landmark: null, city, state, pincode, country };
 
+    const hour = 3600e3;
+    const createdAt = new Date(Date.now() - (daysAgo * 24 + Math.floor(rand() * 20)) * hour);
     await transaction(async (db) => {
-      const order = await queryOne(
-        `INSERT INTO orders (order_number, user_id, status, payment_status, payment_gateway, subtotal, shipping_fee, total,
+      const order = { id: randomUUID(), createdAt };
+      await query(
+        `INSERT INTO orders (id, order_number, user_id, status, payment_status, payment_gateway, subtotal, shipping_fee, total,
                              email, phone, shipping_address, created_at, paid_at, cancelled_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                 now() - make_interval(days => $12, hours => $13),
-                 now() - make_interval(days => $12, hours => $13) + interval '2 minutes',
-                 CASE WHEN $3 = 'cancelled' THEN now() - make_interval(days => $12) ELSE NULL END)
-         RETURNING id, created_at`,
-        [generateOrderNumber(new Date(Date.now() - daysAgo * 864e5)), user.id, status, status === 'cancelled' ? 'refunded' : 'paid',
-          gateway, subtotal, shipping, subtotal + shipping, user.email, user.phone, JSON.stringify(address), daysAgo, Math.floor(rand() * 20)],
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+        [order.id, generateOrderNumber(new Date(Date.now() - daysAgo * 864e5)), user.id, status, status === 'cancelled' ? 'refunded' : 'paid',
+          gateway, subtotal, shipping, subtotal + shipping, user.email, user.phone, JSON.stringify(address),
+          createdAt, new Date(createdAt.getTime() + 2 * 60e3), status === 'cancelled' ? new Date(Date.now() - daysAgo * 864e5) : null],
         db,
       );
       for (const { v, qty } of lines) {
@@ -455,16 +459,17 @@ async function seedDemoOrders() {
       const label = gateway === 'razorpay' ? 'Razorpay' : 'Stripe';
       for (const [i, st] of steps.entries()) {
         await query(
-          `INSERT INTO order_status_history (order_id, status, note, created_at) VALUES ($1, $2, $3, $4::timestamptz + make_interval(hours => $5))`,
-          [order.id, st, i === 0 ? `Payment received via ${label}` : null, order.createdAt, i * 20],
+          'INSERT INTO order_status_history (order_id, status, note, created_at) VALUES ($1, $2, $3, $4)',
+          [order.id, st, i === 0 ? `Payment received via ${label}` : null, new Date(createdAt.getTime() + i * 20 * hour)],
           db,
         );
       }
       if (['shipped', 'delivered'].includes(status)) {
         await query(
           `INSERT INTO shipments (order_id, provider, courier, awb, shipped_at, delivered_at)
-           VALUES ($1, 'manual', $2, $3, $4::timestamptz + interval '1 day', CASE WHEN $5 THEN $4::timestamptz + interval '4 days' END)`,
-          [order.id, international ? 'DHL Express' : 'Delhivery', `${international ? 'DHL' : 'DL'}${Math.floor(1e9 + rand() * 9e9)}`, order.createdAt, status === 'delivered'],
+           VALUES ($1, 'manual', $2, $3, $4, $5)`,
+          [order.id, international ? 'DHL Express' : 'Delhivery', `${international ? 'DHL' : 'DL'}${Math.floor(1e9 + rand() * 9e9)}`,
+            new Date(createdAt.getTime() + 24 * hour), status === 'delivered' ? new Date(createdAt.getTime() + 96 * hour) : null],
           db,
         );
       }
@@ -512,25 +517,33 @@ const MIXED_TEXTS = [
 ];
 
 async function seedDemoReviews() {
-  const rows = await query(
-    `SELECT DISTINCT ON (o.user_id, oi.product_id)
-            o.id AS order_id, o.user_id, u.name, oi.product_id, oi.product_name, o.shipping_address, o.created_at
+  const all = await query(
+    `SELECT o.id AS order_id, o.user_id, u.name, oi.product_id, oi.product_name, o.shipping_address, o.created_at
        FROM orders o JOIN order_items oi ON oi.order_id = o.id JOIN users u ON u.id = o.user_id
       WHERE o.status IN ('delivered', 'shipped') AND oi.product_id IS NOT NULL
       ORDER BY o.user_id, oi.product_id, o.created_at`,
   );
+  // First (earliest) order per customer and product.
+  const seen = new Set();
+  const rows = all.filter((r) => {
+    const key = `${r.userId}|${r.productId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   let n = 0;
   for (const r of rows) {
     const rating = pick([5, 5, 5, 5, 4, 4, 4, 3]);
-    const pool = REVIEW_TEXTS.find(([re]) => re.test(r.productName))?.[1] ?? [['Will order again', 'Fresh, well packed and delivered on time. Will order again.']];
-    const [title, body] = rating === 3 ? pick(MIXED_TEXTS) : pick(pool);
+    const texts = REVIEW_TEXTS.find(([re]) => re.test(r.productName))?.[1] ?? [['Will order again', 'Fresh, well packed and delivered on time. Will order again.']];
+    const [title, body] = rating === 3 ? pick(MIXED_TEXTS) : pick(texts);
     const parts = r.name.split(' ');
     const author = parts.length > 1 ? `${parts[0]} ${parts[parts.length - 1][0]}.` : parts[0];
+    // A few days after the order, but never in the future.
+    const createdAt = new Date(Math.min(new Date(r.createdAt).getTime() + 6 * 864e5, Date.now() - 3 * 3600e3));
     await query(
-      `INSERT INTO reviews (product_id, user_id, order_id, author_name, author_city, author_country, rating, title, body, verified, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, LEAST($10::timestamptz + interval '6 days', now() - interval '3 hours'))
-       ON CONFLICT DO NOTHING`,
-      [r.productId, r.userId, r.orderId, author, r.shippingAddress?.city ?? null, r.shippingAddress?.country ?? null, rating, title, body, r.createdAt],
+      `INSERT IGNORE INTO reviews (product_id, user_id, order_id, author_name, author_city, author_country, rating, title, body, verified, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10)`,
+      [r.productId, r.userId, r.orderId, author, r.shippingAddress?.city ?? null, r.shippingAddress?.country ?? null, rating, title, body, createdAt],
     );
     n++;
   }

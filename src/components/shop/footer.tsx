@@ -5,6 +5,7 @@ import { whatsappUrl } from "@/lib/format";
 import type { Category } from "@/lib/types";
 import { useStoreConfig } from "@/components/providers";
 import { Kolam } from "@/components/kolam";
+import { LogoImage } from "@/components/logo";
 import { MailIcon, PhoneIcon, WhatsAppIcon } from "./icons";
 
 export function SiteFooter({ categories, year }: { categories: Category[]; year: number }) {
@@ -35,7 +36,13 @@ export function SiteFooter({ categories, year }: { categories: Category[]; year:
         {/* Brand block spans the full row up to xl, then 5 columns side by side. */}
         <div className="grid grid-cols-2 gap-x-6 gap-y-10 md:grid-cols-3 xl:grid-cols-12">
           <div className="col-span-2 md:col-span-3 xl:col-span-3">
-            <p className="text-lg font-semibold tracking-tight text-white">{config.storeName}</p>
+            {/* The logo's red outline needs a light ground, so it sits on a cream badge. */}
+            <Link
+              href="/"
+              className="inline-block rounded-2xl bg-[#fffaf3] px-4 py-2 shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+            >
+              <LogoImage name={config.storeName} className="h-20" />
+            </Link>
             <p className="mt-3 max-w-md text-sm leading-6 text-brand-100 xl:max-w-xs">
               Traditional sweets and savouries, freshly made in small batches and delivered across India and worldwide.
               Special pricing on festive, wedding and corporate orders.

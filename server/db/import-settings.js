@@ -14,7 +14,7 @@ try {
   const env = checkEnv(process.env, { level: 'base' });
   if (!env.ok) throw new Error(`Fix .env first: ${env.issues.map((i) => `${i.path}: ${i.message}`).join('; ')}`);
 
-  const saved = new Set((await pool.query('SELECT key FROM settings')).rows.map((r) => r.key));
+  const saved = new Set((await pool.query('SELECT `key` FROM settings')).rows.map((r) => r.key));
   const imported = [];
   const kept = [];
   await transaction(async (db) => {
@@ -27,8 +27,8 @@ try {
       }
       const secret = field.type === 'secret';
       await db.query(
-        `INSERT INTO settings (key, value, is_secret) VALUES ($1, $2, $3)
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, is_secret = EXCLUDED.is_secret, updated_by = NULL, updated_at = now()`,
+        `INSERT INTO settings (\`key\`, value, is_secret) VALUES ($1, $2, $3)
+         ON DUPLICATE KEY UPDATE value = VALUES(value), is_secret = VALUES(is_secret), updated_by = NULL, updated_at = NOW(3)`,
         [key, secret ? encryptSecret(value) : value, secret],
       );
       imported.push(key);

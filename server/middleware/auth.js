@@ -34,7 +34,7 @@ export async function createSession(res, userId, req) {
   const ttlMs = config.auth.sessionTtlDays * 24 * 60 * 60 * 1000;
   await query(
     `INSERT INTO sessions (token_hash, user_id, expires_at, user_agent, ip)
-     VALUES ($1, $2, now() + make_interval(secs => $3), $4, $5)`,
+     VALUES ($1, $2, NOW(3) + INTERVAL $3 SECOND, $4, $5)`,
     [sha256(token), userId, ttlMs / 1000, req.get('user-agent')?.slice(0, 300) ?? null, req.ip],
   );
   res.cookie(SESSION_COOKIE, token, cookieOptions(ttlMs));
@@ -54,14 +54,14 @@ export async function loadUser(req, _res, next) {
   const user = await queryOne(
     `SELECT ${USER_COLUMNS}, s.last_seen_at
        FROM sessions s JOIN users u ON u.id = s.user_id
-      WHERE s.token_hash = $1 AND s.expires_at > now()`,
+      WHERE s.token_hash = $1 AND s.expires_at > NOW(3)`,
     [tokenHash],
   );
   if (user && !user.isBlocked) {
     req.user = user;
     // Touch the session at most every 10 minutes to keep writes low.
     if (Date.now() - new Date(user.lastSeenAt).getTime() > 10 * 60 * 1000) {
-      query('UPDATE sessions SET last_seen_at = now() WHERE token_hash = $1', [tokenHash]).catch(() => {});
+      query('UPDATE sessions SET last_seen_at = NOW(3) WHERE token_hash = $1', [tokenHash]).catch(() => {});
     }
   }
   next();

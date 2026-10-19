@@ -1,7 +1,7 @@
 // Payment gateway webhooks. Mounted before the JSON body parser because
 // signature verification needs the exact raw request body.
 import express, { Router } from 'express';
-import { query, queryOne } from '../db/pool.js';
+import { pool, query } from '../db/pool.js';
 import { logger } from '../lib/logger.js';
 import { markOrderPaid, markPaymentFailed } from '../services/orders.js';
 import { constructStripeEvent, findPayment, verifyRazorpayWebhook } from '../services/payments.js';
@@ -15,16 +15,17 @@ router.use(express.raw({ type: '*/*', limit: '1mb' }));
  */
 async function once(gateway, eventId, type, handler) {
   if (!eventId) return handler();
-  const inserted = await queryOne(
-    `INSERT INTO webhook_events (gateway, event_id, type) VALUES ($1, $2, $3)
-     ON CONFLICT (gateway, event_id) DO NOTHING RETURNING id`,
-    [gateway, eventId, type],
-  );
-  if (!inserted) return; // duplicate delivery
+  let id;
+  try {
+    ({ insertId: id } = await pool.query('INSERT INTO webhook_events (gateway, event_id, type) VALUES ($1, $2, $3)', [gateway, eventId, type]));
+  } catch (err) {
+    if (err.code === '23505') return; // duplicate delivery
+    throw err;
+  }
   try {
     await handler();
   } catch (err) {
-    await query('DELETE FROM webhook_events WHERE id = $1', [inserted.id]);
+    await query('DELETE FROM webhook_events WHERE id = $1', [id]);
     throw err;
   }
 }

@@ -25,7 +25,7 @@ router.get('/users', async (req, res) => {
   const add = (v) => `$${params.push(v)}`;
   if (f.q) {
     const like = add(`%${f.q.replace(/[%_\\]/g, '\\$&')}%`);
-    where.push(`(u.phone ILIKE ${like} OR u.name ILIKE ${like} OR u.email ILIKE ${like})`);
+    where.push(`(u.phone LIKE ${like} OR u.name LIKE ${like} OR u.email LIKE ${like})`);
   }
   if (f.role) where.push(`u.role = ${add(f.role)}`);
   const rows = await query(
@@ -60,11 +60,12 @@ router.patch('/users/:id', async (req, res) => {
   if (id === req.user.id && (body.role === 'customer' || body.isBlocked === true)) {
     throw badRequest('You cannot block or remove admin access from your own account');
   }
-  const user = await queryOne(
-    `UPDATE users u SET role = coalesce($2, role), is_blocked = coalesce($3, is_blocked)
-      WHERE id = $1 RETURNING ${COLUMNS}`,
-    [id, body.role ?? null, body.isBlocked ?? null],
-  );
+  await query('UPDATE users SET role = coalesce($2, role), is_blocked = coalesce($3, is_blocked) WHERE id = $1', [
+    id,
+    body.role ?? null,
+    body.isBlocked ?? null,
+  ]);
+  const user = await queryOne(`SELECT ${COLUMNS} FROM users u WHERE u.id = $1`, [id]);
   if (!user) throw notFound('User not found');
   // Blocking signs the user out everywhere.
   if (body.isBlocked) await query('DELETE FROM sessions WHERE user_id = $1', [id]);

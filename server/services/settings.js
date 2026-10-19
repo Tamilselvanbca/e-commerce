@@ -47,7 +47,7 @@ let overrides = {};
 /** Fingerprint of the rows last applied; lets the sync loop skip unchanged reads. */
 let appliedSignature = '';
 
-const readRows = () => query('SELECT key, value, is_secret, updated_at FROM settings ORDER BY key');
+const readRows = () => query('SELECT `key`, value, is_secret, updated_at FROM settings ORDER BY `key`');
 const signatureOf = (rows) => JSON.stringify(rows.map((r) => [r.key, r.value, r.updatedAt]));
 
 function decodeRows(rows) {
@@ -238,14 +238,14 @@ export async function saveSettings(values, adminId) {
   await transaction(async (db) => {
     for (const [key, value] of Object.entries(changes)) {
       if (value === null) {
-        await db.query('DELETE FROM settings WHERE key = $1', [key]);
+        await db.query('DELETE FROM settings WHERE `key` = $1', [key]);
         continue;
       }
       const secret = SETTING_FIELDS.get(key).type === 'secret';
       await db.query(
-        `INSERT INTO settings (key, value, is_secret, updated_by) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (key) DO UPDATE
-           SET value = EXCLUDED.value, is_secret = EXCLUDED.is_secret, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+        `INSERT INTO settings (\`key\`, value, is_secret, updated_by) VALUES ($1, $2, $3, $4)
+         ON DUPLICATE KEY UPDATE
+           value = VALUES(value), is_secret = VALUES(is_secret), updated_by = VALUES(updated_by), updated_at = NOW(3)`,
         [key, secret ? encryptSecret(value) : value, secret, adminId],
       );
     }

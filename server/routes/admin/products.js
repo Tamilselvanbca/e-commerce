@@ -1,11 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
-import { query, queryOne, transaction } from '../../db/pool.js';
+import { pool, query, queryOne, transaction } from '../../db/pool.js';
 import { AppError, badRequest, notFound } from '../../lib/errors.js';
 import { slugify } from '../../lib/util.js';
 import { optionalText, paginated, parse, uuid } from '../../lib/validate.js';
-import { getProduct, SUMMARY_JOINS, SUMMARY_SELECT } from '../../services/catalog.js';
+import { getProduct, SUMMARY_JOINS, summarySelect } from '../../services/catalog.js';
 import { deleteImage, MAX_UPLOAD_BYTES, saveImage } from '../../services/storage.js';
 
 const router = Router();
@@ -35,17 +36,17 @@ router.get('/products', async (req, res) => {
   const add = (v) => `$${params.push(v)}`;
   if (f.q) {
     const like = add(`%${f.q.replace(/[%_\\]/g, '\\$&')}%`);
-    where.push(`(p.name ILIKE ${like} OR p.slug ILIKE ${like} OR EXISTS (SELECT 1 FROM product_variants sv WHERE sv.product_id = p.id AND sv.sku ILIKE ${like}))`);
+    where.push(`(p.name LIKE ${like} OR p.slug LIKE ${like} OR EXISTS (SELECT 1 FROM product_variants sv WHERE sv.product_id = p.id AND sv.sku LIKE ${like}))`);
   }
   if (f.category) {
     const isId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(f.category);
-    where.push(`p.category_id = (SELECT id FROM categories WHERE ${isId ? 'id = ' : 'slug = '}${add(f.category)}${isId ? '::uuid' : ''})`);
+    where.push(`p.category_id = (SELECT id FROM categories WHERE ${isId ? 'id = ' : 'slug = '}${add(f.category)})`);
   }
   if (f.status) where.push(`p.status = ${add(f.status)}`);
   else where.push(`p.status <> 'archived'`);
 
   const rows = await query(
-    `SELECT ${SUMMARY_SELECT}, count(*) OVER() AS full_count
+    `SELECT ${summarySelect('true')}, count(*) OVER() AS full_count
        FROM products p ${SUMMARY_JOINS('true')}
       WHERE ${where.join(' AND ')}
       ORDER BY p.updated_at DESC
@@ -127,7 +128,7 @@ async function uniqueSlug(base, excludeId, db) {
   const root = base || 'product';
   for (let n = 1; n < 100; n++) {
     const candidate = n === 1 ? root : `${root}-${n}`;
-    const taken = await queryOne('SELECT 1 FROM products WHERE slug = $1 AND id IS DISTINCT FROM $2', [candidate, excludeId], db);
+    const taken = await queryOne('SELECT 1 FROM products WHERE slug = $1 AND NOT (id <=> $2)', [candidate, excludeId], db);
     if (!taken) return candidate;
   }
   throw badRequest('Could not generate a unique slug; please enter one');
@@ -136,7 +137,9 @@ async function uniqueSlug(base, excludeId, db) {
 function translateUniqueError(err, body) {
   if (err?.code !== '23505') return err;
   if (err.constraint === 'product_variants_sku_key') {
-    const sku = /\(sku\)=\(([^)]+)\)/.exec(err.detail ?? '')?.[1];
+    // MySQL: "Duplicate entry 'TT-M-BLK' for key 'product_variants.product_variants_sku_key'"
+    const duplicate = /Duplicate entry '([^']*)'/.exec(err.sqlMessage ?? '')?.[1];
+    const sku = body.variants.find((v) => v.sku.toLowerCase() === duplicate?.toLowerCase())?.sku ?? duplicate;
     const index = body.variants.findIndex((v) => v.sku === sku);
     return new AppError(400, 'VALIDATION_ERROR', `SKU ${sku ?? ''} is already used by another product`.trim(), [
       { path: index >= 0 ? `variants.${index}.sku` : 'variants', message: 'SKU already in use' },
@@ -163,20 +166,20 @@ async function saveProduct(body, productId = null) {
 
     let id = productId;
     if (id) {
-      const updated = await queryOne(
+      const { rowCount } = await db.query(
         `UPDATE products SET name = $2, slug = $3, description = $4, category_id = $5, status = $6, is_featured = $7
-          WHERE id = $1 RETURNING id`,
+          WHERE id = $1`,
+        [id, body.name, slug, body.description, body.categoryId, body.status, body.isFeatured],
+      );
+      if (!rowCount) throw notFound('Product not found');
+    } else {
+      id = randomUUID();
+      await query(
+        `INSERT INTO products (id, name, slug, description, category_id, status, is_featured)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [id, body.name, slug, body.description, body.categoryId, body.status, body.isFeatured],
         db,
       );
-      if (!updated) throw notFound('Product not found');
-    } else {
-      ({ id } = await queryOne(
-        `INSERT INTO products (name, slug, description, category_id, status, is_featured)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-        [body.name, slug, body.description, body.categoryId, body.status, body.isFeatured],
-        db,
-      ));
     }
 
     // Variants: update by id, insert new, delete (or deactivate if ordered before) removed ones.
@@ -189,15 +192,18 @@ async function saveProduct(body, productId = null) {
     const removed = [...existingIds].filter((vid) => !keepIds.has(vid));
     if (removed.length) {
       // Variants that appear in past orders are retired (inactive, SKU freed); the rest are deleted.
+      // (An array parameter expands to a list, so `IN ($1)` matches any of them.)
       await query(
-        `UPDATE product_variants SET is_active = false, sku = sku || '-removed-' || substr(id::text, 1, 8)
-          WHERE id = ANY($1::uuid[]) AND EXISTS (SELECT 1 FROM order_items oi WHERE oi.variant_id = product_variants.id)`,
+        `UPDATE product_variants
+            SET is_active = false,
+                sku = IF(sku LIKE '%-removed-%', sku, CONCAT(sku, '-removed-', LEFT(id, 8)))
+          WHERE id IN ($1) AND EXISTS (SELECT 1 FROM order_items oi WHERE oi.variant_id = product_variants.id)`,
         [removed],
         db,
       );
       await query(
         `DELETE FROM product_variants
-          WHERE id = ANY($1::uuid[]) AND NOT EXISTS (SELECT 1 FROM order_items oi WHERE oi.variant_id = product_variants.id)`,
+          WHERE id IN ($1) AND NOT EXISTS (SELECT 1 FROM order_items oi WHERE oi.variant_id = product_variants.id)`,
         [removed],
         db,
       );
@@ -227,7 +233,7 @@ async function saveProduct(body, productId = null) {
     const keepImageIds = new Set(body.images.filter((img) => img.id).map((img) => img.id));
     const removedImages = oldImages.filter((img) => !keepImageIds.has(img.id));
     if (removedImages.length) {
-      await query('DELETE FROM product_images WHERE id = ANY($1::uuid[])', [removedImages.map((img) => img.id)], db);
+      await query('DELETE FROM product_images WHERE id IN ($1)', [removedImages.map((img) => img.id)], db);
     }
     for (const [i, img] of body.images.entries()) {
       if (img.id && oldImages.some((o) => o.id === img.id)) {
@@ -271,8 +277,8 @@ router.put('/products/:id', async (req, res) => {
 
 router.delete('/products/:id', async (req, res) => {
   const id = parse(uuid, req.params.id);
-  const row = await queryOne(`UPDATE products SET status = 'archived', is_featured = false WHERE id = $1 RETURNING id`, [id]);
-  if (!row) throw notFound('Product not found');
+  const { rowCount } = await pool.query(`UPDATE products SET status = 'archived', is_featured = false WHERE id = $1`, [id]);
+  if (!rowCount) throw notFound('Product not found');
   res.status(204).end();
 });
 

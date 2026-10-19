@@ -12,13 +12,16 @@ import { loadSettings, startSettingsSync } from './services/settings.js';
  * catalogue, and starts background work. Returns a stop function.
  */
 export async function bootstrap({ seedIfEmpty = false } = {}) {
+  // Tested on MySQL 8.0 / 8.4 and MariaDB 10.11; the version helps when reading host logs.
+  const { version } = await queryOne('SELECT VERSION() AS version');
+  logger.info(`Connected to database server ${version}`);
   // Apply pending migrations on boot so deployments stay in sync with the code.
   await migrate({ silent: true });
   // Layer the values saved in Admin → Settings over the environment.
   await loadSettings();
 
   if (seedIfEmpty) {
-    const { count } = await queryOne('SELECT count(*) FROM products');
+    const { count } = await queryOne('SELECT count(*) AS count FROM products');
     if (count === 0) {
       logger.info('Empty catalogue: adding the starter products');
       await seedStore();

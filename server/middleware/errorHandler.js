@@ -15,10 +15,13 @@ export function errorHandler(err, req, res, _next) {
   } else if (err?.type === 'entity.too.large') {
     err = new AppError(413, 'PAYLOAD_TOO_LARGE', 'Request body is too large');
   } else if (err?.code === '23505') {
-    // PostgreSQL unique violation that wasn't handled more specifically.
+    // Unique violation that wasn't handled more specifically (see db/pool.js for the codes).
     err = new AppError(409, 'CONFLICT', 'A record with the same unique value already exists', { constraint: err.constraint });
-  } else if (err?.code === '22P02') {
-    err = new AppError(400, 'BAD_REQUEST', 'Invalid identifier');
+  } else if (err?.code === '23503') {
+    err = new AppError(409, 'CONFLICT', 'This record is linked to other data and cannot be changed this way');
+  } else if (err?.errno === 1406) {
+    // MySQL "Data too long for column"; validation normally catches this first.
+    err = new AppError(400, 'BAD_REQUEST', 'One of the values is too long');
   }
 
   if (err instanceof AppError) {
