@@ -84,6 +84,11 @@ try {
   // Configuration errors name the missing variables (never their values).
   console.error(`Startup failed: ${err?.message ?? err}`);
   if (err?.stack) console.error(err.stack);
+  if (String(err?.message).includes('Invalid environment configuration')) {
+    // Shows whether the hosting UI's secrets reached this process at all (names only, never values).
+    const names = Object.keys(process.env).sort();
+    console.error(`The app received ${names.length} environment variables: ${names.join(', ')}`);
+  }
   process.exit(1);
 }
 
