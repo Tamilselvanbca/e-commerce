@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { duplexPair } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -72,10 +73,25 @@ try {
   // starts empty (Admin → Products), and removed sample data never comes back.
   stop = await bootstrap();
 
+  const api = createApp();
+  // Server-side rendering fetches catalogue data through this agent, which connects
+  // to the API in memory (frontend/src/lib/server-api.ts). A request to our own
+  // 127.0.0.1:PORT doesn't work on the platform, whose container only allows
+  // outbound HTTP(S) and MySQL connections.
+  const apiServer = http.createServer(api);
+  globalThis.__shopApiAgent = new (class extends http.Agent {
+    createConnection() {
+      const [client, serverSide] = duplexPair();
+      // A loopback client to Express (req.ip) and to the rate limiter's internal-request exemption.
+      Object.defineProperty(serverSide, 'remoteAddress', { value: '127.0.0.1' });
+      apiServer.emit('connection', serverSide);
+      return client;
+    }
+  })();
+
   const web = next({ dev: false, dir: root, hostname: '0.0.0.0', port });
   const handleWeb = web.getRequestHandler();
   await web.prepare();
-  const api = createApp();
 
   const isApiPath = (url) => /^\/(api|uploads)(\/|\?|$)/.test(url);
   handle = (req, res) => (isApiPath(req.url ?? '/') ? api(req, res) : handleWeb(req, res));
