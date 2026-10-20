@@ -10,6 +10,7 @@ import { cn } from "@/lib/format";
 import type { User } from "@/lib/types";
 import { useEscapeKey } from "./hooks";
 import {
+  IconCalendar,
   IconCategories,
   IconChat,
   IconClose,
@@ -32,6 +33,7 @@ const NAV = [
   { href: "/admin/products", label: "Products", icon: IconProducts },
   { href: "/admin/categories", label: "Categories", icon: IconCategories },
   { href: "/admin/users", label: "Customers", icon: IconUsers },
+  { href: "/admin/prebookings", label: "Pre-bookings", icon: IconCalendar },
   { href: "/admin/enquiries", label: "Bulk enquiries", icon: IconChat },
   { href: "/admin/reviews", label: "Reviews", icon: IconStar },
   { href: "/admin/discounts", label: "Discounts", icon: IconTag },

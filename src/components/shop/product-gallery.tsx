@@ -42,9 +42,12 @@ export function ProductGallery({ images, name }: { images: ProductImage[]; name:
 
   return (
     // self-start keeps the 4:5 image from stretching to the height of the details column.
-    <div className="flex flex-col gap-3 self-start lg:sticky lg:top-24 lg:flex-row-reverse lg:items-start lg:gap-4">
+    // On desktop the image is also capped by the window height (minus the header and
+    // breadcrumbs), so the whole photo is visible without scrolling at 100% zoom;
+    // justify-end packs the row to the left (it's reversed).
+    <div className="flex flex-col gap-3 self-start lg:sticky lg:top-24 lg:flex-row-reverse lg:items-start lg:justify-end lg:gap-4">
       <div
-        className="group relative aspect-[4/5] w-full min-w-0 flex-1 overflow-hidden rounded-2xl bg-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+        className="group relative aspect-[4/5] w-full min-w-0 flex-1 overflow-hidden rounded-2xl bg-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 lg:max-w-[calc((100dvh-14rem)*4/5)]"
         role="group"
         aria-roledescription="carousel"
         aria-label={`${name} images`}

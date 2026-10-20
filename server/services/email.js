@@ -268,6 +268,59 @@ export function adminNewOrderEmail(order) {
   };
 }
 
+/** "Sat, 1 Nov 2026" for a YYYY-MM-DD date. */
+export const formatDay = (date) =>
+  new Intl.DateTimeFormat('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(
+    new Date(`${date}T00:00:00Z`),
+  );
+
+function prebookingTable(booking) {
+  const rows = booking.items
+    .map(
+      (i) => `<tr>
+        <td style="padding:6px 0;border-bottom:1px solid #f4f4f5;font-size:14px">${esc(i.productName)}${i.variantLabel ? ` <span style="color:#71717a">(${esc(i.variantLabel)})</span>` : ''} × ${i.quantity}</td>
+        <td style="padding:6px 0;border-bottom:1px solid #f4f4f5;font-size:14px;text-align:right">${formatMoney(i.lineTotal)}</td>
+      </tr>`,
+    )
+    .join('');
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0">${rows}
+    <tr><td style="padding-top:8px;font-size:14px;font-weight:bold">Estimated total</td>
+    <td style="padding-top:8px;font-size:14px;font-weight:bold;text-align:right">${formatMoney(booking.estimatedTotal)}</td></tr></table>`;
+}
+
+/** Sent to the customer (when they gave an email) after they pre-book. */
+export function prebookingReceivedEmail(booking) {
+  if (!booking.email) return null;
+  return {
+    to: booking.email,
+    subject: `Pre-booking ${booking.reference} received`,
+    html: layout('We have your pre-booking', `
+      <p style="font-size:14px">Thank you, ${esc(booking.name)}. We've received your pre-booking
+      <strong>${esc(booking.reference)}</strong> for <strong>${esc(formatDay(booking.deliveryDate))}</strong>.
+      We'll contact you to confirm it and arrange payment.</p>
+      ${prebookingTable(booking)}
+      <p style="font-size:12px;color:#71717a">Prices are estimates and will be confirmed with your booking.</p>`),
+    text: `We've received your pre-booking ${booking.reference} for ${formatDay(booking.deliveryDate)}. Estimated total ${formatMoney(booking.estimatedTotal)}. We'll contact you to confirm it.`,
+  };
+}
+
+export function adminPrebookingEmail(booking) {
+  if (!config.email.adminNotify) return null;
+  return {
+    to: config.email.adminNotify,
+    subject: `New pre-booking ${booking.reference} for ${formatDay(booking.deliveryDate)}`,
+    html: layout(`New pre-booking ${booking.reference}`, `
+      <p style="font-size:14px"><strong>${esc(booking.name)}</strong><br>
+      Phone: ${esc(booking.phone)}${booking.email ? `<br>Email: ${esc(booking.email)}` : ''}<br>
+      Date: <strong>${esc(formatDay(booking.deliveryDate))}</strong></p>
+      ${prebookingTable(booking)}
+      ${booking.address ? `<p style="font-size:14px;white-space:pre-wrap"><strong>Address</strong><br>${esc(booking.address)}</p>` : ''}
+      ${booking.notes ? `<p style="font-size:14px;white-space:pre-wrap"><strong>Notes</strong><br>${esc(booking.notes)}</p>` : ''}
+      <p style="margin:24px 0"><a href="${config.frontendUrl}/admin/prebookings">Open in admin</a></p>`),
+    text: `Pre-booking ${booking.reference} from ${booking.name} (${booking.phone}) for ${formatDay(booking.deliveryDate)}, estimated ${formatMoney(booking.estimatedTotal)}`,
+  };
+}
+
 export function adminBulkEnquiryEmail(enquiry) {
   if (!config.email.adminNotify) return null;
   const items = enquiry.items

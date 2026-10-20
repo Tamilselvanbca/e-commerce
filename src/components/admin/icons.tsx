@@ -61,6 +61,14 @@ export const IconUsers = (p: IconProps) => (
   </Svg>
 );
 
+export const IconCalendar = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="5" width="18" height="16" rx="2" />
+    <path d="M3 10h18M8 3v4M16 3v4" />
+    <path d="M8 14h3v3H8z" />
+  </Svg>
+);
+
 export const IconChat = (p: IconProps) => (
   <Svg {...p}>
     <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.8A8 8 0 1 1 21 12Z" />
