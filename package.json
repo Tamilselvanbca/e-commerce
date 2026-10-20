@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "next build --webpack",
+    "dev": "node server.js --build",
     "start": "node server.js"
   },
   "dependencies": {
