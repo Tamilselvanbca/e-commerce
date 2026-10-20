@@ -1,6 +1,7 @@
 // Server Component data fetching for public (non-user-specific) data.
 // Calls the backend directly over the internal network instead of going
 // through the /api rewrite.
+import type { Agent } from "node:http";
 import { buildQuery } from "./api";
 import type { Category, Product, ProductList, ProductSummary, ReviewList, StoreConfig } from "./types";
 
@@ -12,16 +13,45 @@ export class ServerApiError extends Error {
   }
 }
 
-async function get<T>(path: string, query?: Record<string, string | number | boolean | null | undefined>): Promise<T> {
-  const res = await fetch(`${BACKEND_URL}/api${path}${buildQuery(query)}`, {
-    headers: { Accept: "application/json" },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => null);
-    throw new ServerApiError(res.status, data?.error?.message ?? `Request failed (${res.status})`);
+/**
+ * Set by the single-process GoDaddy bundle (deploy/godaddy/server.js): an agent
+ * that reaches the API in memory, because the platform refuses a connection to
+ * the app's own port.
+ */
+const inProcessAgent = () => (globalThis as unknown as { __shopApiAgent?: Agent }).__shopApiAgent;
+
+async function request(url: string): Promise<{ status: number; body: string }> {
+  const agent = inProcessAgent();
+  if (!agent) {
+    const res = await fetch(`${BACKEND_URL}${url}`, { headers: { Accept: "application/json" }, cache: "no-store" });
+    return { status: res.status, body: await res.text() };
   }
-  return res.json() as Promise<T>;
+  const http = await import("node:http");
+  return new Promise((resolve, reject) => {
+    const req = http.request({ path: url, host: "localhost", headers: { Accept: "application/json" }, agent }, (res) => {
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk: string) => (body += chunk));
+      res.on("end", () => resolve({ status: res.statusCode ?? 500, body }));
+      res.on("error", reject);
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+async function get<T>(path: string, query?: Record<string, string | number | boolean | null | undefined>): Promise<T> {
+  const { status, body } = await request(`/api${path}${buildQuery(query)}`);
+  if (status < 200 || status >= 300) {
+    let message = `Request failed (${status})`;
+    try {
+      message = JSON.parse(body)?.error?.message ?? message;
+    } catch {
+      // Not JSON: keep the generic message.
+    }
+    throw new ServerApiError(status, message);
+  }
+  return JSON.parse(body) as T;
 }
 
 export const serverApi = {
