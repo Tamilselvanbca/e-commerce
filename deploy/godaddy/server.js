@@ -2,6 +2,8 @@
 // (Express, under /api and /uploads) and the website (Next.js) on
 // process.env.PORT, because the platform runs a single app per upload.
 // Generated into the deploy bundle by deploy/godaddy/build.mjs.
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,8 +11,9 @@ import { fileURLToPath } from 'node:url';
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT) || 3000;
 
+// Always production, also under `npm run dev` (GoDaddy's preview): the bundle has no dev setup.
+process.env.NODE_ENV = 'production';
 // Platform defaults. Each can be overridden in the Node.js Hosting UI.
-process.env.NODE_ENV ??= 'production';
 // Outbound SMTP is blocked; mail goes through the platform gateway on 127.0.0.1:2525.
 process.env.EMAIL_TRANSPORT ??= 'godaddy';
 // Traffic arrives through GoDaddy's Cloudflare CDN, which reports the visitor's IP here.
@@ -35,8 +38,28 @@ let handle = (req, res) => {
 const server = http.createServer((req, res) => handle(req, res));
 server.listen(port, '0.0.0.0', () => console.log(`Listening on port ${port}; starting the store…`));
 
+/**
+ * Builds the website (`next build --webpack`) while the starting page is served.
+ * GoDaddy's preview runs `npm run dev` (node server.js --build) without a separate build
+ * step, and the folder isn't cleaned between deployments, so dev always rebuilds;
+ * `npm start` only builds when no build exists.
+ */
+function buildWebsite() {
+  console.log('Building the website; this takes a few minutes…');
+  const nextBin = path.join(root, 'node_modules', 'next', 'dist', 'bin', 'next');
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [nextBin, 'build', '--webpack'], { cwd: root, stdio: 'inherit', env: process.env });
+    child.on('error', reject);
+    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`Website build failed (exit code ${code})`))));
+  });
+}
+
 let stop = () => {};
 try {
+  if (process.argv.includes('--build') || !existsSync(path.join(root, '.next', 'BUILD_ID'))) {
+    await buildWebsite();
+  }
+
   // Imported after the defaults above: the API reads its configuration on import.
   const [{ createApp }, { bootstrap }, { logger }, { default: next }] = await Promise.all([
     import('./server/app.js'),
