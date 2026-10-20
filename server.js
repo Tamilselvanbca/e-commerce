@@ -3,7 +3,7 @@
 // process.env.PORT, because the platform runs a single app per upload.
 // Generated into the deploy bundle by deploy/godaddy/build.mjs.
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { duplexPair } from 'node:stream';
@@ -36,7 +36,19 @@ let handle = (req, res) => {
   res.writeHead(503, { 'content-type': 'text/html; charset=utf-8', 'retry-after': '10', 'cache-control': 'no-store' });
   res.end(STARTING_PAGE);
 };
-const server = http.createServer((req, res) => handle(req, res));
+
+// GET /__status: which bundle is running and whether page rendering can reach the
+// API (no settings or secrets), so a deployment can be checked from outside.
+const version = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).buildCommit ?? 'unknown';
+const status = { version, startedAt: new Date().toISOString(), ready: false, renderApi: 'not checked', loopback: 'not checked' };
+const server = http.createServer((req, res) => {
+  res.setHeader('x-app-version', version);
+  if (req.url === '/__status') {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(status));
+  }
+  handle(req, res);
+});
 server.listen(port, '0.0.0.0', () => console.log(`Listening on port ${port}; starting the store…`));
 
 /**
@@ -52,6 +64,18 @@ function buildWebsite() {
     const child = spawn(process.execPath, [nextBin, 'build', '--webpack'], { cwd: root, stdio: 'inherit', env: process.env });
     child.on('error', reject);
     child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`Website build failed (exit code ${code})`))));
+  });
+}
+
+/** One GET request; resolves "ok (HTTP n)" or the error code, never throws. */
+function probe(options) {
+  return new Promise((resolve) => {
+    const req = http.get({ ...options, timeout: 5000 }, (res) => {
+      res.resume();
+      resolve(`ok (HTTP ${res.statusCode})`);
+    });
+    req.on('timeout', () => req.destroy(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })));
+    req.on('error', (err) => resolve(`failed: ${err.code ?? err.message}`));
   });
 }
 
@@ -88,6 +112,11 @@ try {
       return client;
     }
   })();
+  [status.renderApi, status.loopback] = await Promise.all([
+    probe({ agent: globalThis.__shopApiAgent, host: 'localhost', path: '/api/health' }),
+    probe({ host: '127.0.0.1', port, path: '/api/health' }),
+  ]);
+  logger.info({ renderApi: status.renderApi, loopback: status.loopback }, 'Connection checks');
 
   const web = next({ dev: false, dir: root, hostname: '0.0.0.0', port });
   const handleWeb = web.getRequestHandler();
@@ -95,7 +124,8 @@ try {
 
   const isApiPath = (url) => /^\/(api|uploads)(\/|\?|$)/.test(url);
   handle = (req, res) => (isApiPath(req.url ?? '/') ? api(req, res) : handleWeb(req, res));
-  logger.info({ port, env: process.env.NODE_ENV }, 'Store ready');
+  status.ready = true;
+  logger.info({ port, env: process.env.NODE_ENV, version }, 'Store ready');
 } catch (err) {
   // Plain console output so it shows in the runtime logs even if logging never started.
   // Configuration errors name the missing variables (never their values).

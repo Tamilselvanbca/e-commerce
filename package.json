@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Sweets & snacks store (website + API) for GoDaddy Node.js Hosting. Built from a238a5b.",
+  "buildCommit": "a238a5b",
   "type": "module",
   "main": "server.js",
   "engines": {
