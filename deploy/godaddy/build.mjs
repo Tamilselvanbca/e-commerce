@@ -63,6 +63,8 @@ async function buildBundle() {
     version: api.version,
     private: true,
     description: `Sweets & snacks store (website + API) for GoDaddy Node.js Hosting. Built from ${commit}.`,
+    // Reported by server.js at /__status and in the x-app-version header.
+    buildCommit: commit,
     type: 'module',
     main: 'server.js',
     engines: { node: '>=22.12' },
