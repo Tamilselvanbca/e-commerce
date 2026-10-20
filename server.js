@@ -70,12 +70,16 @@ function buildWebsite() {
 /** One GET request; resolves "ok (HTTP n)" or the error code, never throws. */
 function probe(options) {
   return new Promise((resolve) => {
-    const req = http.get({ ...options, timeout: 5000 }, (res) => {
+    const req = http.get(options, (res) => {
+      clearTimeout(timer);
       res.resume();
       resolve(`ok (HTTP ${res.statusCode})`);
     });
-    req.on('timeout', () => req.destroy(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })));
-    req.on('error', (err) => resolve(`failed: ${err.code ?? err.message}`));
+    const timer = setTimeout(() => req.destroy(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })), 5000);
+    req.on('error', (err) => {
+      clearTimeout(timer);
+      resolve(`failed: ${err.code ?? err.message}`);
+    });
   });
 }
 
@@ -106,6 +110,10 @@ try {
   globalThis.__shopApiAgent = new (class extends http.Agent {
     createConnection() {
       const [client, serverSide] = duplexPair();
+      // Socket methods Node's HTTP code may call; meaningless for an in-memory stream.
+      for (const side of [client, serverSide]) {
+        for (const method of ['setTimeout', 'setNoDelay', 'setKeepAlive', 'ref', 'unref']) side[method] ??= () => side;
+      }
       // A loopback client to Express (req.ip) and to the rate limiter's internal-request exemption.
       Object.defineProperty(serverSide, 'remoteAddress', { value: '127.0.0.1' });
       apiServer.emit('connection', serverSide);
