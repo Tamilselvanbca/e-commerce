@@ -66,7 +66,9 @@ async function buildBundle() {
     type: 'module',
     main: 'server.js',
     engines: { node: '>=22.12' },
-    scripts: { build: 'next build', start: 'node server.js' },
+    // webpack, not Turbopack: Turbopack runs PostCSS in a helper process that binds a local
+    // port, which GoDaddy's build sandbox refuses ("binding to a port: Permission denied").
+    scripts: { build: 'next build --webpack', start: 'node server.js' },
     dependencies: sortKeys({ ...api.dependencies, ...web.dependencies, ...pick(web.devDependencies, BUILD_TOOLS) }),
   };
   await writeFile(path.join(out, 'package.json'), `${JSON.stringify(pkg, null, 2)}\n`);
