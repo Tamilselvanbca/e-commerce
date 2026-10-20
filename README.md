@@ -57,7 +57,7 @@ backend/              Express API
     routes/           HTTP endpoints (admin/ for the admin API)
     services/         business logic: orders, cart, catalog, payments, otp, email, storage, shiprocket, whatsapp
     middleware/       auth, security (CSRF, rate limits), error handling
-    db/               migrations/, migration runner, seed script
+    db/               migrations/, migration runner, settings import
   test/               node:test + supertest suite
 frontend/             Next.js app
   src/app/(shop)/     storefront routes
@@ -84,8 +84,7 @@ cd backend
 cp .env.example .env          # then set OTP_SECRET to a long random string
 npm install
 npm run migrate
-npm run seed:demo             # sweets & snacks catalog + admin user + demo orders and reviews (or `npm run seed` for catalog only)
-npm run dev                   # http://localhost:4000
+npm run dev                   # http://localhost:4000 (the catalogue starts empty: add products in /admin)
 
 # 3. Frontend (new terminal)
 cd frontend
@@ -97,10 +96,6 @@ npm run dev                   # http://localhost:3000
 **Logging in locally:** the default `OTP_PROVIDER=console` prints the code in the backend log, and
 `OTP_EXPOSE_IN_RESPONSE=true` also shows it on the login screen. The number in `ADMIN_PHONES`
 (default `9999999999`) becomes an admin on login; open http://localhost:3000/admin.
-
-**Demo images:** the seed script draws an SVG illustration for every product (on a brass thali, banana
-leaf or bowl, plus a gift-pack shot) into `backend/uploads/seed/`. Replace them with real photos from the
-admin panel.
 
 **Paying locally:** `ENABLE_MOCK_PAYMENTS=true` adds a "Test payment" option that simulates success
 or failure. To try the real gateways, put Razorpay and Stripe *test* keys in `backend/.env`. For webhooks
@@ -114,8 +109,7 @@ and a tunnel such as ngrok for Razorpay.
 | backend | `npm run dev` | API with auto-reload |
 | backend | `npm test` | run the test suite (needs the `shop_test` database, see below) |
 | backend | `npm run migrate` | apply pending SQL migrations (also runs on server start) |
-| backend | `npm run seed` / `seed:demo` | seed catalog / catalog plus demo orders |
-| backend | `npm run db:reset` | drop everything, migrate and seed (development only) |
+| backend | `npm run db:reset` | drop everything and migrate (development only; Admin → Settings are kept) |
 | frontend | `npm run dev` / `build` / `start` | Next.js dev server / production build / serve |
 | frontend | `npm run lint` | ESLint |
 

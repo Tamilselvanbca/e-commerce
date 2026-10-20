@@ -15,7 +15,7 @@ by `deploy/godaddy/build.mjs`; don't edit it by hand. It contains:
 - **One app per upload:** website and API run in one Node.js process on `process.env.PORT`.
 - **Database:** GoDaddy's built-in **managed MySQL**. The platform injects `DB_HOST`, `DB_PORT`, `DB_NAME`,
   `DB_USER` and `DB_PASSWORD`; the app reads them with `mysql2`. Tables are created automatically on the first
-  start, and an empty database gets the starter catalogue. (Works on MySQL 8.0.16+ and MariaDB 10.11.)
+  start; the catalogue starts empty, ready for the store's own products. (Works on MySQL 8.0.16+ and MariaDB 10.11.)
 - **Email:** sent through GoDaddy's built-in mail gateway (no SMTP). The gateway chooses the sender address;
   customers' replies go to the store's support email.
 - **Uploaded images:** saved under `public/assets/uploads`, which GoDaddy keeps between deployments.

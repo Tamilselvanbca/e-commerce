@@ -30,8 +30,9 @@ node --env-file=backend/.env deploy/godaddy/make-env.mjs    # dist/godaddy.env f
 Then:
 1. In Node.js Hosting create the app from the `godaddy` branch (Git sync) or the zip and enable its managed
    MySQL database if the UI offers it (no `DATABASE_URL` needed).
-2. Add the variables from `dist/godaddy.env` and deploy. The first start creates the tables and the starter
-   catalogue; the runtime log shows `Connected to database server <version>`.
+2. Add the variables from `dist/godaddy.env` for **both** the Preview and the Publish variant (Secrets →
+   Publish → *Sync from Preview*) and deploy. The first start creates the tables (the catalogue starts empty);
+   the runtime log shows `Connected to database server <version>`.
 3. Check the preview, publish, connect the domain, log in with an `ADMIN_PHONES` number and review **Admin → Settings**.
 
 Full details: [deploy/godaddy/README.md](../deploy/godaddy/README.md). After code changes, run the build again and
@@ -50,7 +51,7 @@ bash setup.sh norukutheeni.in
 
 `deploy/setup.sh` installs Docker, adds swap on small servers, opens ports 22/80/443, clones the code to
 `/opt/shop`, generates the database password, `OTP_SECRET` and `SETTINGS_ENCRYPTION_KEY`, builds and starts
-the stack, adds the starter catalogue to an empty database and schedules daily backups to
+the stack and schedules daily backups to
 `/var/backups/shop`. Point the domain's DNS at the server (below), log in with the `ADMIN_PHONES` number
 and finish the configuration in **Admin → Settings**. Run the same script again to update to the latest code.
 

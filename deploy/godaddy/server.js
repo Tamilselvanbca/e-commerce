@@ -68,8 +68,9 @@ try {
     import('next'),
   ]);
 
-  // Migrations, saved settings, starter catalogue on an empty database, background jobs.
-  stop = await bootstrap({ seedIfEmpty: true });
+  // Migrations, saved settings, background jobs. No sample catalogue: the live store
+  // starts empty (Admin → Products), and removed sample data never comes back.
+  stop = await bootstrap();
 
   const web = next({ dev: false, dir: root, hostname: '0.0.0.0', port });
   const handleWeb = web.getRequestHandler();

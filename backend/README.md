@@ -6,7 +6,7 @@ for the endpoint reference.
 ```bash
 cp .env.example .env     # set OTP_SECRET
 npm install
-npm run migrate && npm run seed:demo
+npm run migrate
 npm run dev              # http://localhost:4000/api/health
 npm test                 # needs the shop_test database
 ```
@@ -18,7 +18,7 @@ npm test                 # needs the shop_test database
 | `src/routes/` | HTTP layer: request validation (zod) and response shaping |
 | `src/services/` | business logic: `orders` (stock reservation, payment state), `cart`, `catalog`, `payments` (Razorpay/Stripe/mock), `otp` + `sms`, `email`, `storage` (local/S3), `shiprocket`, `whatsapp` |
 | `src/middleware/` | session loading and role checks, CSRF origin check, rate limits, error handler |
-| `src/db/` | `migrations/*.sql`, migration runner, seed script |
+| `src/db/` | `migrations/*.sql`, migration runner, settings import |
 | `src/jobs.js` | expiry of unpaid orders, session clean-up |
 | `test/` | `node:test` + supertest suite |
 

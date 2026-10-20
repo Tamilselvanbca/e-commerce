@@ -121,12 +121,6 @@ if [ -z "${healthy:-}" ]; then
   exit 1
 fi
 
-products=$("${COMPOSE[@]}" exec -T mysql sh -c 'mysql -ushop -p"$MYSQL_PASSWORD" -N -e "SELECT count(*) FROM products" shop 2>/dev/null' | tr -d '[:space:]')
-if [ "$products" = "0" ] && [ "${SEED:-yes}" = "yes" ]; then
-  log "Adding the starter catalogue (edit or replace it in Admin -> Products)"
-  "${COMPOSE[@]}" exec -T backend node src/db/seed.js
-fi
-
 log "Scheduling daily backups to /var/backups/shop (kept 14 days)"
 mkdir -p /var/backups/shop
 cat > /etc/cron.d/shop-backup <<EOF
