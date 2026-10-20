@@ -6,7 +6,7 @@ import {
   PAYMENT_STATUS_LABELS,
   PAYMENT_STATUS_TONE,
 } from "@/lib/format";
-import type { BulkEnquiryStatus, Gateway, OrderStatus, PaymentStatus, ProductStatus } from "@/lib/types";
+import type { BulkEnquiryStatus, Gateway, OrderStatus, PaymentStatus, PrebookingStatus, ProductStatus } from "@/lib/types";
 
 export function OrderStatusBadge({ status }: { status: OrderStatus }) {
   return <Badge className={ORDER_STATUS_TONE[status]}>{ORDER_STATUS_LABELS[status] ?? status}</Badge>;
@@ -46,6 +46,25 @@ const ENQUIRY_STATUS_TONE: Record<BulkEnquiryStatus, string> = {
 
 export function EnquiryStatusBadge({ status }: { status: BulkEnquiryStatus }) {
   return <Badge className={ENQUIRY_STATUS_TONE[status]}>{ENQUIRY_STATUS_LABELS[status] ?? status}</Badge>;
+}
+
+export const PREBOOKING_STATUS_LABELS: Record<PrebookingStatus, string> = {
+  new: "New",
+  confirmed: "Confirmed",
+  ready: "Ready",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
+const PREBOOKING_STATUS_TONE: Record<PrebookingStatus, string> = {
+  new: "bg-blue-50 text-blue-800 ring-blue-200",
+  confirmed: "bg-amber-50 text-amber-800 ring-amber-200",
+  ready: "bg-violet-50 text-violet-800 ring-violet-200",
+  completed: "bg-emerald-50 text-emerald-800 ring-emerald-200",
+  cancelled: "bg-zinc-100 text-zinc-600 ring-zinc-200",
+};
+
+export function PrebookingStatusBadge({ status }: { status: PrebookingStatus }) {
+  return <Badge className={PREBOOKING_STATUS_TONE[status]}>{PREBOOKING_STATUS_LABELS[status] ?? status}</Badge>;
 }
 
 export function GatewayLabel({ gateway }: { gateway: Gateway | null | undefined }) {

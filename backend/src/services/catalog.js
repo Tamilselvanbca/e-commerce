@@ -245,7 +245,7 @@ function countParams(sql) {
  */
 export async function getProduct({ slug, id, admin = false }) {
   const row = await queryOne(
-    `SELECT p.id, p.name, p.slug, p.description, p.status, p.is_featured, p.created_at, p.updated_at,
+    `SELECT p.id, p.name, p.slug, p.description, p.ingredients, p.show_ingredients, p.status, p.is_featured, p.created_at, p.updated_at,
             c.id AS category_id, c.name AS category_name, c.slug AS category_slug
        FROM products p LEFT JOIN categories c ON c.id = p.category_id
       WHERE ${slug ? 'p.slug = $1' : 'p.id = $1'} ${admin ? '' : `AND p.status = 'active'`}`,
@@ -278,6 +278,9 @@ export async function getProduct({ slug, id, admin = false }) {
     name: row.name,
     slug: row.slug,
     description: row.description,
+    // Hidden ingredients aren't sent to the store at all.
+    ingredients: admin || row.showIngredients ? row.ingredients : null,
+    showIngredients: row.showIngredients,
     status: row.status,
     isFeatured: row.isFeatured,
     category: row.categoryId ? { id: row.categoryId, name: row.categoryName, slug: row.categorySlug } : null,

@@ -101,6 +101,8 @@ const productSchema = z
     name: z.string().trim().min(2, 'Name is required').max(150),
     slug: z.string().trim().max(80).optional().transform((v) => (v ? slugify(v) : undefined)),
     description: z.string().trim().max(10_000).default(''),
+    ingredients: optionalText(5000).transform((v) => v || null),
+    showIngredients: z.boolean().default(true),
     categoryId: z.uuid().nullish().transform((v) => v ?? null),
     status: z.enum(['active', 'draft', 'archived']).default('active'),
     isFeatured: z.boolean().default(false),
@@ -167,17 +169,18 @@ async function saveProduct(body, productId = null) {
     let id = productId;
     if (id) {
       const { rowCount } = await db.query(
-        `UPDATE products SET name = $2, slug = $3, description = $4, category_id = $5, status = $6, is_featured = $7
+        `UPDATE products SET name = $2, slug = $3, description = $4, category_id = $5, status = $6, is_featured = $7,
+                ingredients = $8, show_ingredients = $9
           WHERE id = $1`,
-        [id, body.name, slug, body.description, body.categoryId, body.status, body.isFeatured],
+        [id, body.name, slug, body.description, body.categoryId, body.status, body.isFeatured, body.ingredients, body.showIngredients],
       );
       if (!rowCount) throw notFound('Product not found');
     } else {
       id = randomUUID();
       await query(
-        `INSERT INTO products (id, name, slug, description, category_id, status, is_featured)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [id, body.name, slug, body.description, body.categoryId, body.status, body.isFeatured],
+        `INSERT INTO products (id, name, slug, description, category_id, status, is_featured, ingredients, show_ingredients)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [id, body.name, slug, body.description, body.categoryId, body.status, body.isFeatured, body.ingredients, body.showIngredients],
         db,
       );
     }

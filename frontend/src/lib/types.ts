@@ -127,6 +127,9 @@ export type ReviewEligibility = {
 
 export type Product = ProductSummary & {
   description: string;
+  /** Null in the store when the admin hides them. */
+  ingredients: string | null;
+  showIngredients: boolean;
   status: ProductStatus;
   images: ProductImage[];
   variants: Variant[];
@@ -434,6 +437,46 @@ export type BulkEnquiry = {
   whatsappUrl: string | null;
 };
 
+/** A product on the Pre-book form (all active products, in stock or not). */
+export type PrebookProduct = {
+  id: string;
+  name: string;
+  slug: string;
+  imageUrl: string | null;
+  category: { name: string; slug: string } | null;
+  variants: { id: string; label: string | null; price: number }[];
+};
+
+export type PrebookingItem = {
+  productId: string;
+  variantId: string;
+  productName: string;
+  variantLabel: string | null;
+  unitPrice: number;
+  quantity: number;
+  lineTotal: number;
+};
+
+export type PrebookingStatus = "new" | "confirmed" | "ready" | "completed" | "cancelled";
+
+export type Prebooking = {
+  id: string;
+  reference: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  /** YYYY-MM-DD */
+  deliveryDate: string;
+  address: string | null;
+  notes: string | null;
+  items: PrebookingItem[];
+  estimatedTotal: number;
+  status: PrebookingStatus;
+  adminNotes: string | null;
+  createdAt: string;
+  whatsappUrl: string | null;
+};
+
 export type AdminProductRow = {
   id: string;
   name: string;
@@ -453,6 +496,8 @@ export type ProductInput = {
   name: string;
   slug?: string;
   description: string;
+  ingredients: string | null;
+  showIngredients: boolean;
   categoryId: string | null;
   status: ProductStatus;
   isFeatured: boolean;

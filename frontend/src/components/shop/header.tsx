@@ -178,6 +178,7 @@ export function SiteHeader({ categories }: { categories: Category[] }) {
 /** Desktop header navigation (categories live in the mobile menu and footer). */
 const NAV_LINKS = [
   { href: "/products", label: "Shop all" },
+  { href: "/prebook", label: "Pre-book" },
   { href: "/bulk-order", label: "Bulk & festive orders" },
   { href: "/reviews", label: "Reviews" },
   { href: "/about", label: "About us" },

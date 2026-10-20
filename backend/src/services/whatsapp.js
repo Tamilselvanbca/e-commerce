@@ -33,6 +33,22 @@ export function bulkEnquiryAdminLink(enquiry) {
   );
 }
 
+/** Link the customer opens to follow up a pre-booking with the business. */
+export function prebookingCustomerLink(booking) {
+  return whatsappLink(
+    config.whatsapp.number,
+    `Hi ${config.store.name}, I just pre-booked for ${booking.deliveryDate} (ref ${booking.reference}).\n\n${itemsText(booking.items)}`,
+  );
+}
+
+/** Link an admin opens to message the customer about their pre-booking. */
+export function prebookingAdminLink(booking) {
+  return whatsappLink(
+    booking.phone.replace(/^\+/, ''),
+    `Hi ${booking.name}, thanks for your pre-booking ${booking.reference} with ${config.store.name}.`,
+  );
+}
+
 export async function notifyBusinessViaWati(enquiry) {
   const { enabled, endpoint, token, templateName, notifyNumber } = config.whatsapp.wati;
   if (!enabled) return;

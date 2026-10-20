@@ -71,6 +71,8 @@ export function ProductForm({
   const [slug, setSlug] = useState(product?.slug ?? "");
   const [slugTouched, setSlugTouched] = useState(isEdit);
   const [description, setDescription] = useState(product?.description ?? "");
+  const [ingredients, setIngredients] = useState(product?.ingredients ?? "");
+  const [showIngredients, setShowIngredients] = useState(product?.showIngredients ?? true);
   const [categoryId, setCategoryId] = useState(product?.category?.id ?? "");
   const [status, setStatus] = useState<ProductStatus>(product?.status ?? "draft");
   const [isFeatured, setIsFeatured] = useState(product?.isFeatured ?? false);
@@ -143,6 +145,8 @@ export function ProductForm({
         name: name.trim(),
         ...(effectiveSlug ? { slug: effectiveSlug } : {}),
         description,
+        ingredients: ingredients.trim() || null,
+        showIngredients,
         categoryId: categoryId || null,
         status,
         isFeatured,
@@ -210,7 +214,7 @@ export function ProductForm({
 
   const totalStock = variants.reduce((s, v) => s + (Number(v.stock) > 0 ? Number(v.stock) : 0), 0);
   const prices = variants.map((v) => rupeesToPaise(v.price)).filter((p) => Number.isFinite(p) && p > 0);
-  const knownFieldKeys = new Set(["name", "slug", "description", "categoryId", "status", "isFeatured", "variants"]);
+  const knownFieldKeys = new Set(["name", "slug", "description", "ingredients", "categoryId", "status", "isFeatured", "variants"]);
   const otherErrors = Object.entries(errors).filter(
     ([k]) => !knownFieldKeys.has(k) && !k.startsWith("variants.") && !k.startsWith("images."),
   );
@@ -326,6 +330,32 @@ export function ProductForm({
                     aria-invalid={Boolean(errors.description) || undefined}
                   />
                 </Field>
+                <Field
+                  label="Ingredients"
+                  htmlFor="p-ingredients"
+                  error={errors.ingredients}
+                  hint="Shown under the description on the product page, e.g. gram flour, pure ghee, sugar, cardamom."
+                >
+                  <Textarea
+                    id="p-ingredients"
+                    rows={3}
+                    value={ingredients}
+                    onChange={(e) => {
+                      setIngredients(e.target.value);
+                      touched("ingredients");
+                    }}
+                    maxLength={5000}
+                    aria-invalid={Boolean(errors.ingredients) || undefined}
+                  />
+                </Field>
+                <Checkbox
+                  label="Show ingredients on the product page"
+                  checked={showIngredients}
+                  onChange={(e) => {
+                    setShowIngredients(e.target.checked);
+                    touched("showIngredients");
+                  }}
+                />
               </div>
             </Panel>
 

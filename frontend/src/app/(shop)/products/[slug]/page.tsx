@@ -98,7 +98,9 @@ export default async function ProductPage(props: PageProps<"/products/[slug]">) 
       />
       <Breadcrumbs items={crumbs} className="mb-6" />
 
-      <div className="grid gap-8 lg:grid-cols-2 lg:gap-12 xl:gap-16">
+      {/* Gallery column: half the width at most, and no wider than the photo needs when the window is short
+          (photo width = (window height − 14rem) × 4/5, plus 6rem for the thumbnail strip); details take the rest. */}
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,min(50%,calc((100dvh-14rem)*0.8+6rem)))_minmax(0,1fr)] lg:gap-12 xl:gap-16">
         <ProductGallery images={galleryImages(product)} name={product.name} />
 
         <div>
@@ -125,6 +127,19 @@ export default async function ProductPage(props: PageProps<"/products/[slug]">) 
                 Product details
               </h2>
               <div className="mt-3 whitespace-pre-line text-sm leading-7 text-zinc-600">{product.description}</div>
+            </section>
+          )}
+
+          {/* Sent only when the admin shows them (Admin → Products → Ingredients). */}
+          {product.ingredients && (
+            <section
+              aria-labelledby="ingredients-title"
+              className={product.description ? "mt-6" : "mt-10 border-t border-zinc-200 pt-8"}
+            >
+              <h2 id="ingredients-title" className="text-base font-semibold text-zinc-900">
+                Ingredients
+              </h2>
+              <p className="mt-3 whitespace-pre-line text-sm leading-7 text-zinc-600">{product.ingredients}</p>
             </section>
           )}
         </div>

@@ -92,6 +92,11 @@ export function SiteFooter({ categories, year }: { categories: Category[]; year:
                 </Link>
               </li>
               <li>
+                <Link href="/prebook" className={link}>
+                  Pre-book
+                </Link>
+              </li>
+              <li>
                 <Link href="/bulk-order" className={link}>
                   Bulk & festive orders
                 </Link>
