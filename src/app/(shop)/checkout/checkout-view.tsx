@@ -105,8 +105,13 @@ function CheckoutForm({
   const [adding, setAdding] = useState(initialAddresses.length === 0);
   const [email, setEmail] = useState(user.email ?? "");
   const [emailError, setEmailError] = useState<string | null>(null);
-  // Codes the customer applied; they're part of the pricing request below.
-  const [couponCode, setCouponCode] = useState("");
+  // Codes the customer applied; they're part of the pricing request below. A coupon
+  // applied from the cart's offers arrives as ?coupon= (this form only renders in the browser).
+  const [couponCode, setCouponCode] = useState(() =>
+    typeof window === "undefined"
+      ? ""
+      : (new URLSearchParams(window.location.search).get("coupon") ?? "").trim().toUpperCase().slice(0, 40),
+  );
   const [giftCardCode, setGiftCardCode] = useState("");
   // Shipping depends on the destination, so re-price for the selected address and codes.
   const quote = useApi<CheckoutSummary>(

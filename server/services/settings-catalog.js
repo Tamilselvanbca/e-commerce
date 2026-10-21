@@ -48,6 +48,13 @@ export const SETTINGS_GROUPS = [
       },
       { key: 'LOW_STOCK_THRESHOLD', label: 'Low-stock warning at', type: 'number', min: 0, max: 100000, suffix: 'units or fewer' },
       {
+        key: 'PREBOOK_ENABLED',
+        label: 'Pre-booking',
+        type: 'boolean',
+        checkboxLabel: 'Let customers pre-book products for a future date',
+        help: 'Turn off to hide the Pre-book page and its menu link. Existing bookings stay in Admin → Pre-bookings.',
+      },
+      {
         key: 'ORDER_PAYMENT_TIMEOUT_MINUTES',
         label: 'Unpaid order timeout',
         type: 'number',

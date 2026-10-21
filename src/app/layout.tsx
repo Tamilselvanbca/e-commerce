@@ -32,6 +32,7 @@ const FALLBACK_CONFIG: StoreConfig = {
   whatsappNumber: null,
   gateways: { razorpay: { enabled: false, keyId: null }, stripe: { enabled: false }, mock: { enabled: false } },
   giftCardPurchase: { min: 10000, max: 5000000 },
+  prebookEnabled: false,
 };
 
 async function loadConfig(): Promise<StoreConfig> {

@@ -16,6 +16,7 @@ import cartRoutes from './routes/cart.js';
 import catalogRoutes from './routes/catalog.js';
 import checkoutRoutes from './routes/checkout.js';
 import giftCardRoutes from './routes/gift-cards.js';
+import offerRoutes from './routes/offers.js';
 import orderRoutes from './routes/orders.js';
 import paymentRoutes from './routes/payments.js';
 import prebookingRoutes from './routes/prebookings.js';
@@ -59,6 +60,7 @@ export function createApp() {
   api.use('/orders', orderRoutes);
   api.use('/bulk-enquiries', bulkRoutes);
   api.use('/prebookings', prebookingRoutes);
+  api.use('/offers', offerRoutes);
   api.use('/gift-cards', giftCardRoutes);
   api.use('/admin', adminRoutes);
   app.use('/api', api);

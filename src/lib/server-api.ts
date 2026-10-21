@@ -3,7 +3,7 @@
 // through the /api rewrite.
 import type { Agent } from "node:http";
 import { buildQuery } from "./api";
-import type { Category, PrebookProduct, Product, ProductList, ProductSummary, ReviewList, StoreConfig } from "./types";
+import type { Category, Offer, PrebookProduct, Product, ProductList, ProductSummary, ReviewList, StoreConfig } from "./types";
 
 const BACKEND_URL = (process.env.BACKEND_URL ?? "http://localhost:4000").replace(/\/$/, "");
 
@@ -70,6 +70,8 @@ export const serverApi = {
   related: (slug: string) =>
     get<{ items: ProductSummary[] }>(`/products/${encodeURIComponent(slug)}/related`).then((r) => r.items),
   reviews: (query: Record<string, string | number | undefined>) => get<ReviewList>("/reviews", query),
+  /** Running offers (automatic offers and listed coupons). */
+  offers: () => get<{ items: Offer[] }>("/offers").then((r) => r.items),
   /** Every active product (in stock or not) for the Pre-book form. */
   prebookProducts: () => get<{ items: PrebookProduct[] }>("/prebookings/products").then((r) => r.items),
   productReviews: (slug: string, query: Record<string, string | number | undefined> = {}) =>

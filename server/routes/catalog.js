@@ -32,6 +32,8 @@ router.get('/config', (_req, res) => {
     },
     // Limits for buying gift cards online (paise).
     giftCardPurchase: { min: GIFT_CARD_PURCHASE.min, max: GIFT_CARD_PURCHASE.max },
+    // Admin → Settings → Pre-booking: shows or hides the Pre-book page and link.
+    prebookEnabled: config.store.prebookEnabled,
   });
 });
 

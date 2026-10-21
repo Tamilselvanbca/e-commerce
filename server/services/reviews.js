@@ -78,18 +78,19 @@ export async function listReviews({ productId = null, rating = null, sort = 'new
 }
 
 /** Display name for reviews: first name + last initial ("Priya N."). */
-export function reviewerName(name) {
+export function reviewerName(name, verified = true) {
   const parts = String(name ?? '').trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return 'Verified customer';
+  if (parts.length === 0) return verified ? 'Verified customer' : 'Customer';
   return parts.length === 1 ? parts[0] : `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}.`;
 }
 
 /**
- * Whether `user` may review `productId`: they must have a paid, non-cancelled
- * order containing it. Returns the qualifying order and any existing review.
+ * Whether `user` may review `productId`: any signed-in customer can, at any
+ * time. A paid, non-cancelled order containing the product makes the review a
+ * verified purchase. Returns that order (if any) and any existing review.
  */
 export async function reviewEligibility(user, productId) {
-  if (!user) return { canReview: false, reason: 'login', review: null };
+  if (!user) return { canReview: false, reason: 'login', review: null, verified: false };
   const [order, existing] = await Promise.all([
     queryOne(
       `SELECT o.id, o.shipping_address FROM orders o JOIN order_items oi ON oi.order_id = o.id
@@ -99,25 +100,33 @@ export async function reviewEligibility(user, productId) {
     ),
     queryOne(`SELECT ${COLUMNS} FROM reviews r WHERE r.product_id = $1 AND r.user_id = $2`, [productId, user.id]),
   ]);
-  if (!order) return { canReview: false, reason: 'not_purchased', review: null };
-  return { canReview: true, reason: existing ? 'already_reviewed' : null, review: existing ? toReview(existing) : null, order };
+  return {
+    canReview: true,
+    reason: existing ? 'already_reviewed' : null,
+    review: existing ? toReview(existing) : null,
+    verified: Boolean(order),
+    order,
+  };
 }
 
 /** Creates or replaces the customer's review of a product. */
 export async function saveReview(user, productId, { rating, title, body }) {
   const eligibility = await reviewEligibility(user, productId);
-  if (!eligibility.canReview) {
-    throw badRequest('You can review products from your paid orders. Place an order to share your thoughts.');
-  }
-  const address = eligibility.order.shippingAddress ?? {};
-  // One review per customer and product: editing replaces it.
+  if (!eligibility.canReview) throw badRequest('Log in to write a review');
+  const { order, verified } = eligibility;
+  const address = order?.shippingAddress ?? {};
+  // One review per customer and product: editing replaces it (and picks up a purchase made since).
   await query(
     `INSERT INTO reviews (product_id, user_id, order_id, author_name, author_city, author_country, rating, title, body, verified)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON DUPLICATE KEY UPDATE
-       rating = VALUES(rating), title = VALUES(title), body = VALUES(body),
-       author_name = VALUES(author_name), order_id = VALUES(order_id)`,
-    [productId, user.id, eligibility.order.id, reviewerName(user.name), address.city ?? null, address.country ?? null, rating, title, body],
+       rating = VALUES(rating), title = VALUES(title), body = VALUES(body), author_name = VALUES(author_name),
+       order_id = VALUES(order_id), verified = VALUES(verified),
+       author_city = coalesce(VALUES(author_city), author_city), author_country = coalesce(VALUES(author_country), author_country)`,
+    [
+      productId, user.id, order?.id ?? null, reviewerName(user.name, verified),
+      address.city ?? null, address.country ?? null, rating, title, body, verified,
+    ],
   );
   const row = await queryOne(`SELECT ${COLUMNS} FROM reviews r WHERE r.product_id = $1 AND r.user_id = $2`, [productId, user.id]);
   return toReview(row);

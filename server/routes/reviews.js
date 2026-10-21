@@ -35,11 +35,11 @@ router.get('/products/:slug/reviews', async (req, res) => {
   res.json({ ...list, summary });
 });
 
-/** Whether the current visitor can review this product (and their existing review). */
+/** Whether the current visitor can review this product, whether it'd be a verified purchase, and their existing review. */
 router.get('/products/:slug/reviews/eligibility', async (req, res) => {
   const product = await productOr404(req.params.slug);
-  const { canReview, reason, review } = await reviewEligibility(req.user, product.id);
-  res.json({ canReview, reason, review });
+  const { canReview, reason, review, verified } = await reviewEligibility(req.user, product.id);
+  res.json({ canReview, reason, review, verified });
 });
 
 const reviewSchema = z.object({

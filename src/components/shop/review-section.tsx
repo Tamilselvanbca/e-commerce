@@ -15,7 +15,8 @@ type Sort = "newest" | "highest" | "lowest";
 
 /**
  * Reviews block for a product page: rating breakdown, list with sorting and
- * "load more", and the write/edit form for customers who bought the product.
+ * "load more", and the write/edit form for any signed-in customer (buyers'
+ * reviews show as verified purchases).
  */
 export function ReviewSection({ slug, initial }: { slug: string; initial: ReviewList }) {
   const [sort, setSort] = useState<Sort>("newest");
@@ -84,7 +85,7 @@ export function ReviewSection({ slug, initial }: { slug: string; initial: Review
           {summary.count === 0 ? (
             <div className="rounded-2xl border border-dashed border-zinc-300 px-6 py-12 text-center">
               <p className="text-base font-semibold text-zinc-900">No reviews yet</p>
-              <p className="mt-1 text-sm text-zinc-600">Bought this? Be the first to tell others what you thought.</p>
+              <p className="mt-1 text-sm text-zinc-600">Tried this? Be the first to tell others what you thought.</p>
             </div>
           ) : (
             <>
@@ -142,7 +143,7 @@ function WriteReview({
     return (
       <div className={box}>
         <p className="text-sm font-semibold text-zinc-900">Share your thoughts</p>
-        <p className="mt-1 text-sm text-zinc-600">Log in to review products you&apos;ve ordered.</p>
+        <p className="mt-1 text-sm text-zinc-600">Tried this product? Log in with your mobile number to write a review.</p>
         <Link href={loginHref(`/products/${slug}#reviews`)} className="mt-3 inline-block text-sm font-medium text-brand-700 underline-offset-4 hover:underline">
           Log in to write a review
         </Link>
@@ -159,15 +160,33 @@ function WriteReview({
   if (!eligibility.canReview) {
     return (
       <div className={box}>
-        <p className="text-sm font-semibold text-zinc-900">Reviews are from verified buyers</p>
-        <p className="mt-1 text-sm text-zinc-600">Once you&apos;ve ordered this product, you can share your review here.</p>
+        <p className="text-sm font-semibold text-zinc-900">Share your thoughts</p>
+        <p className="mt-1 text-sm text-zinc-600">Log in to write a review.</p>
       </div>
     );
   }
-  return <ReviewForm key={eligibility.review?.id ?? "new"} slug={slug} existing={eligibility.review} onSaved={onSaved} />;
+  return (
+    <ReviewForm
+      key={eligibility.review?.id ?? "new"}
+      slug={slug}
+      existing={eligibility.review}
+      verified={eligibility.verified}
+      onSaved={onSaved}
+    />
+  );
 }
 
-function ReviewForm({ slug, existing, onSaved }: { slug: string; existing: Review | null; onSaved: () => Promise<void> }) {
+function ReviewForm({
+  slug,
+  existing,
+  verified,
+  onSaved,
+}: {
+  slug: string;
+  existing: Review | null;
+  verified: boolean;
+  onSaved: () => Promise<void>;
+}) {
   const uid = useId();
   const toast = useToast();
   const [open, setOpen] = useState(!existing);
@@ -213,7 +232,14 @@ function ReviewForm({ slug, existing, onSaved }: { slug: string; existing: Revie
   const shown = hover || rating;
   return (
     <form onSubmit={submit} className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-5" noValidate>
-      <p className="text-sm font-semibold text-zinc-900">{existing ? "Edit your review" : "Write a review"}</p>
+      <div>
+        <p className="text-sm font-semibold text-zinc-900">{existing ? "Edit your review" : "Write a review"}</p>
+        <p className="mt-0.5 text-xs text-zinc-500">
+          {verified
+            ? "You bought this, so your review shows a Verified purchase badge."
+            : "Reviews from customers who ordered this show a Verified purchase badge."}
+        </p>
+      </div>
       <fieldset>
         <legend className="text-sm font-medium text-zinc-800">Your rating</legend>
         <div className="mt-2 flex gap-1" onMouseLeave={() => setHover(0)}>

@@ -40,6 +40,8 @@ export type StoreConfig = {
   };
   /** Limits for buying gift cards online (paise). */
   giftCardPurchase: { min: number; max: number };
+  /** Admin → Settings → Pre-booking: the Pre-book page and menu link. */
+  prebookEnabled: boolean;
 };
 
 export type Category = {
@@ -120,9 +122,12 @@ export type RatingSummary = {
 export type ReviewList = Paginated<Review> & { summary: RatingSummary };
 
 export type ReviewEligibility = {
+  /** Any signed-in customer can review. */
   canReview: boolean;
-  reason: "login" | "not_purchased" | "already_reviewed" | null;
+  reason: "login" | "already_reviewed" | null;
   review: Review | null;
+  /** They bought it: the review shows as a verified purchase. */
+  verified: boolean;
 };
 
 export type Product = ProductSummary & {
@@ -313,6 +318,22 @@ export type PublicDiscount = {
   automatic: boolean;
 };
 
+/** A running offer customers can see: an automatic offer, or a coupon the admin lists. */
+export type Offer = PublicDiscount & {
+  region: "all" | "domestic" | "international";
+  firstOrderOnly: boolean;
+  endsAt: string | null;
+};
+
+/** An offer checked against the cart at checkout. */
+export type CartOffer = Offer & {
+  eligible: boolean;
+  /** Paise the cart is short of the minimum (0 when eligible). */
+  remaining: number;
+  /** Paise it would save on this cart (0 when not eligible). */
+  saving: number;
+};
+
 export type CheckoutSummary = {
   cart: Cart;
   subtotal: number;
@@ -327,6 +348,8 @@ export type CheckoutSummary = {
   coupon: { code: string; applied: boolean; message: string | null } | null;
   /** An automatic offer the cart is close to unlocking. */
   offerHint: { title: string; remaining: number } | null;
+  /** Offers for this cart, eligible ones first. */
+  offers: CartOffer[];
   giftCard: { code: string; applied: boolean; balance: number | null; amount: number; message: string | null } | null;
   /** 0 = no free shipping for this destination. */
   freeShippingThreshold: number;
@@ -342,6 +365,8 @@ export type AdminDiscount = PublicDiscount & {
   usageLimit: number | null;
   perCustomerLimit: number | null;
   firstOrderOnly: boolean;
+  /** Coupon codes: listed to customers in "Available offers". */
+  showInOffers: boolean;
   isActive: boolean;
   timesUsed: number;
   /** Paise saved on paid orders. */
@@ -364,6 +389,7 @@ export type DiscountInput = {
   usageLimit: number | null;
   perCustomerLimit: number | null;
   firstOrderOnly: boolean;
+  showInOffers: boolean;
   isActive: boolean;
 };
 

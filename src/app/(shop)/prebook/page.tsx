@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ClockIcon, SparkIcon, WhatsAppIcon } from "@/components/shop/icons";
 import { Breadcrumbs, Container } from "@/components/shop/section";
+import { ButtonLink } from "@/components/ui";
 import { whatsappUrl } from "@/lib/format";
 import { serverApi } from "@/lib/server-api";
 import type { PrebookProduct, StoreConfig } from "@/lib/types";
@@ -18,11 +19,39 @@ const STEPS = [
 ];
 
 export default async function PrebookPage() {
-  const [products, config] = await Promise.all([
-    serverApi.prebookProducts().catch((): PrebookProduct[] | null => null),
-    serverApi.config().catch((): StoreConfig | null => null),
-  ]);
+  const config = await serverApi.config().catch((): StoreConfig | null => null);
   const whatsapp = config?.whatsappNumber ?? null;
+
+  // Switched off in Admin → Settings (the menu link is hidden too).
+  if (config && !config.prebookEnabled) {
+    return (
+      <Container className="py-6 sm:py-10">
+        <Breadcrumbs items={[{ label: "Home", href: "/" }, { label: "Pre-book" }]} className="mb-6" />
+        <div className="mx-auto max-w-lg rounded-2xl border border-dashed border-zinc-300 bg-white px-6 py-14 text-center">
+          <h1 className="text-xl font-semibold text-zinc-900">Pre-booking is closed right now</h1>
+          <p className="mt-2 text-sm text-zinc-600">
+            You can still order from our shop{whatsapp ? ", or message us on WhatsApp for a special request" : ""}.
+          </p>
+          <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
+            <ButtonLink href="/products">Shop all products</ButtonLink>
+            {whatsapp && (
+              <a
+                href={whatsappUrl(whatsapp, `Hi ${config.storeName}, I'd like to place an advance order.`)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+              >
+                <WhatsAppIcon className="size-4 text-[#1ebe5b]" />
+                WhatsApp us
+              </a>
+            )}
+          </div>
+        </div>
+      </Container>
+    );
+  }
+
+  const products = await serverApi.prebookProducts().catch((): PrebookProduct[] | null => null);
 
   return (
     <Container className="py-6 sm:py-10">

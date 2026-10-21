@@ -1,5 +1,5 @@
 import { twMerge } from "tailwind-merge";
-import type { OrderStatus, PaymentStatus } from "./types";
+import type { Offer, OrderStatus, PaymentStatus } from "./types";
 
 /** Formats paise as currency: 129900 -> "₹1,299". Shows decimals only when needed. */
 export function formatPrice(paise: number, currency = "INR"): string {
@@ -21,6 +21,24 @@ export function rupeesToPaise(value: string | number): number {
 export function paiseToRupees(paise: number | null | undefined): string {
   if (paise == null) return "";
   return (paise / 100).toFixed(2).replace(/\.00$/, "");
+}
+
+/** What an offer gives: "10% off up to ₹300", "₹100 off", "Free delivery". */
+export function offerBenefit(o: Pick<Offer, "type" | "value" | "maxDiscount">): string {
+  if (o.type === "percent") return `${o.value}% off${o.maxDiscount ? ` up to ${formatPrice(o.maxDiscount)}` : ""}`;
+  if (o.type === "fixed") return `${formatPrice(o.value)} off`;
+  return "Free delivery";
+}
+
+/** When it applies: "On orders of ₹2,500 or more · First order only". */
+export function offerTerms(o: Pick<Offer, "minSubtotal" | "firstOrderOnly" | "region">): string {
+  return [
+    o.minSubtotal > 0 ? `On orders of ${formatPrice(o.minSubtotal)} or more` : "On any order",
+    o.firstOrderOnly ? "First order only" : null,
+    o.region === "domestic" ? "Deliveries in India" : o.region === "international" ? "Deliveries outside India" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export function discountPercent(price: number, compareAt: number | null): number | null {

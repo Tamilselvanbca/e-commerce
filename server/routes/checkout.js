@@ -6,7 +6,7 @@ import { logger } from '../lib/logger.js';
 import { optionalText, parse, uuid } from '../lib/validate.js';
 import { requireAuth } from '../middleware/auth.js';
 import { loadCart, resolveCartId } from '../services/cart.js';
-import { publicDiscount } from '../services/discounts.js';
+import { listOffers, publicDiscount } from '../services/discounts.js';
 import { formatGiftCardCode } from '../services/gift-cards.js';
 import {
   cancelOrderById,
@@ -39,6 +39,10 @@ router.get('/summary', async (req, res) => {
   const price = await priceOrder({ subtotal: cart.subtotal, country, userId: req.user.id, couponCode, giftCardCode });
   const rule = shippingRule(country);
   const card = price.giftCard?.card;
+  const offers =
+    cart.subtotal > 0
+      ? await listOffers({ subtotal: price.subtotal, shippingFee: price.shippingFee, international: rule.international, userId: req.user.id })
+      : [];
   res.json({
     cart,
     subtotal: price.subtotal,
@@ -50,6 +54,8 @@ router.get('/summary', async (req, res) => {
     appliedDiscount: price.applied ? { ...publicDiscount(price.applied.discount), amount: price.applied.amount } : null,
     coupon: price.code ? { code: price.code.code, applied: price.code.applied, message: price.code.message } : null,
     offerHint: price.hint,
+    /** Offers for this cart: Apply buttons for eligible codes, "add ₹X more" for the rest. */
+    offers,
     giftCard: price.giftCard
       ? card
         ? { code: formatGiftCardCode(card.code), applied: true, balance: card.balance, amount: price.giftCardAmount, message: null }
