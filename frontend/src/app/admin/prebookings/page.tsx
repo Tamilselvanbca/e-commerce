@@ -1,8 +1,9 @@
 "use client";
 
 import { Suspense, useId, useState } from "react";
+import Link from "next/link";
 import { api, buildQuery } from "@/lib/api";
-import { useToast } from "@/components/providers";
+import { useStoreConfig, useToast } from "@/components/providers";
 import { Button, PageLoader, Pagination, Spinner, Textarea } from "@/components/ui";
 import { cn, formatDate, formatPrice } from "@/lib/format";
 import type { Paginated, Prebooking, PrebookingStatus } from "@/lib/types";
@@ -33,6 +34,7 @@ export default function AdminPrebookingsPage() {
 }
 
 function PrebookingsView() {
+  const { prebookEnabled } = useStoreConfig();
   const { get, page, update, hrefFor } = useUrlState();
   const q = get("q");
   const status = (STATUSES as string[]).includes(get("status")) ? get("status") : "";
@@ -52,6 +54,16 @@ function PrebookingsView() {
             : "Bookings from the Pre-book page. Confirm them with the customer and arrange payment."
         }
       />
+
+      {!prebookEnabled && (
+        <InlineAlert tone="warning" className="mb-4" title="Pre-booking is switched off">
+          Customers can&apos;t see the Pre-book page or send new bookings. Turn it on in{" "}
+          <Link href="/admin/settings" className="font-medium underline underline-offset-2">
+            Settings → Store details
+          </Link>
+          .
+        </InlineAlert>
+      )}
 
       <Segmented
         label="Pre-booking status"

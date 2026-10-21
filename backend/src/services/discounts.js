@@ -8,7 +8,7 @@ import { conflict, notFound } from '../lib/errors.js';
 import { formatMoney } from '../lib/util.js';
 
 export const DISCOUNT_COLUMNS = `d.id, d.code, d.title, d.description, d.type, d.value, d.max_discount, d.min_subtotal,
-  d.region, d.starts_at, d.ends_at, d.usage_limit, d.per_customer_limit, d.first_order_only, d.is_active,
+  d.region, d.starts_at, d.ends_at, d.usage_limit, d.per_customer_limit, d.first_order_only, d.show_in_offers, d.is_active,
   d.created_at, d.updated_at`;
 
 export const normalizeCode = (code) => String(code ?? '').trim().toUpperCase().replace(/\s+/g, '');
@@ -136,6 +136,50 @@ export async function resolveDiscount(ctx, db = pool) {
   return { applied, code, hint };
 }
 
+/** An offer as listed to customers: the discount plus its conditions. */
+function offer(d) {
+  return { ...publicDiscount(d), region: d.region, firstOrderOnly: d.firstOrderOnly, endsAt: d.endsAt };
+}
+
+/**
+ * Offers customers can see while they run: automatic offers, and coupon codes
+ * the admin marked "show in offers". Without `ctx` (product and cart pages) it
+ * lists them all, minus fully redeemed ones. With a checkout `ctx` each offer
+ * says whether it applies to this cart (`eligible`, `saving`) or how much more
+ * the cart needs (`remaining`); offers this customer can't use at all (wrong
+ * region, already used, not their first order…) are left out. Best first.
+ */
+export async function listOffers(ctx = null, db = pool) {
+  const rows = await query(
+    `SELECT ${DISCOUNT_COLUMNS} FROM discounts d
+      WHERE d.is_active AND (d.code IS NULL OR d.show_in_offers)
+        AND (d.starts_at IS NULL OR d.starts_at <= now()) AND (d.ends_at IS NULL OR d.ends_at > now())
+      ORDER BY d.min_subtotal, d.created_at`,
+    [],
+    db,
+  );
+  const offers = [];
+  for (const d of rows) {
+    if (!ctx) {
+      if (d.usageLimit && (await usageCounts(d.id, null, db)).total >= d.usageLimit) continue;
+      offers.push(offer(d));
+      continue;
+    }
+    const problem = await ineligibility(d, ctx, db);
+    if (problem && problem.reason !== 'MIN_SUBTOTAL') continue;
+    // Below the minimum: only list it if nothing else would stop it once the cart gets there.
+    if (problem && (await ineligibility(d, { ...ctx, subtotal: d.minSubtotal }, db))) continue;
+    offers.push({
+      ...offer(d),
+      eligible: !problem,
+      remaining: problem ? d.minSubtotal - ctx.subtotal : 0,
+      saving: problem ? 0 : discountAmount(d, ctx.subtotal, ctx.shippingFee),
+    });
+  }
+  if (ctx) offers.sort((a, b) => Number(b.eligible) - Number(a.eligible) || b.saving - a.saving || a.remaining - b.remaining);
+  return offers;
+}
+
 /**
  * Re-checks a chosen discount with its row locked, inside the checkout
  * transaction, so usage limits hold under concurrent checkouts.
@@ -162,6 +206,7 @@ function adminDiscount(d) {
     usageLimit: d.usageLimit,
     perCustomerLimit: d.perCustomerLimit,
     firstOrderOnly: d.firstOrderOnly,
+    showInOffers: d.showInOffers,
     isActive: d.isActive,
     timesUsed: d.timesUsed ?? 0,
     totalSaved: d.totalSaved ?? 0,
@@ -211,6 +256,7 @@ const COLUMN_FOR = {
   usageLimit: 'usage_limit',
   perCustomerLimit: 'per_customer_limit',
   firstOrderOnly: 'first_order_only',
+  showInOffers: 'show_in_offers',
   isActive: 'is_active',
 };
 

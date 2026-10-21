@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
+import { ProductOffers } from "@/components/shop/offers";
 import { ProductGallery } from "@/components/shop/product-gallery";
 import { ProductGrid } from "@/components/shop/product-card";
 import { ProductPurchase } from "@/components/shop/product-purchase";
@@ -10,7 +11,7 @@ import { RatingBadge } from "@/components/shop/reviews";
 import { Breadcrumbs, Container, SectionHeading, type Crumb } from "@/components/shop/section";
 import { safeDecode } from "@/components/shop/utils";
 import { serverApi } from "@/lib/server-api";
-import type { Product, ProductImage, ProductSummary, ReviewList } from "@/lib/types";
+import type { Offer, Product, ProductImage, ProductSummary, ReviewList } from "@/lib/types";
 
 const getProduct = cache((slug: string) => serverApi.product(slug));
 
@@ -47,7 +48,7 @@ export default async function ProductPage(props: PageProps<"/products/[slug]">) 
   const product = await getProduct(slug);
   if (!product) notFound();
 
-  const [related, reviews] = await Promise.all([
+  const [related, reviews, offers] = await Promise.all([
     serverApi.related(slug).catch((): ProductSummary[] => []),
     serverApi.productReviews(slug, { pageSize: 6 }).catch(
       (): ReviewList => ({
@@ -59,6 +60,7 @@ export default async function ProductPage(props: PageProps<"/products/[slug]">) 
         summary: { average: 0, count: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } },
       }),
     ),
+    serverApi.offers().catch((): Offer[] => []),
   ]);
 
   const crumbs: Crumb[] = [
@@ -120,6 +122,12 @@ export default async function ProductPage(props: PageProps<"/products/[slug]">) 
           )}
 
           <ProductPurchase product={product} />
+
+          {offers.length > 0 && (
+            <div className="mt-8">
+              <ProductOffers offers={offers} />
+            </div>
+          )}
 
           {product.description && (
             <section aria-labelledby="details-title" className="mt-10 border-t border-zinc-200 pt-8">

@@ -5,6 +5,12 @@ const bool = z
   .optional()
   .transform((v) => v === 'true' || v === '1' || v === 'yes');
 
+/** Like `bool`, but on when unset (for features that ship enabled). */
+const boolOn = z
+  .enum(['true', 'false', '1', '0', 'yes', 'no', ''])
+  .optional()
+  .transform((v) => v === undefined || v === '' || v === 'true' || v === '1' || v === 'yes');
+
 const optionalString = z
   .string()
   .optional()
@@ -47,6 +53,7 @@ const schema = z.object({
   ORDER_PAYMENT_TIMEOUT_MINUTES: z.coerce.number().int().min(5).default(30),
   STORE_TIMEZONE: z.string().default('Asia/Kolkata'), // used for daily analytics buckets
   LOW_STOCK_THRESHOLD: z.coerce.number().int().min(0).default(5),
+  PREBOOK_ENABLED: boolOn, // the Pre-book page and its menu link
 
   // Auth
   SESSION_TTL_DAYS: z.coerce.number().int().min(1).default(30),
@@ -222,6 +229,7 @@ function build(source, level = 'boot') {
       paymentTimeoutMinutes: env.ORDER_PAYMENT_TIMEOUT_MINUTES,
       timezone: env.STORE_TIMEZONE,
       lowStockThreshold: env.LOW_STOCK_THRESHOLD,
+      prebookEnabled: env.PREBOOK_ENABLED,
     },
 
     auth: {

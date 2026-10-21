@@ -30,6 +30,8 @@ const discountSchema = z
     usageLimit: limit,
     perCustomerLimit: limit,
     firstOrderOnly: z.boolean().default(false),
+    // Coupon codes only; automatic offers are always listed.
+    showInOffers: z.boolean().default(true),
     isActive: z.boolean().default(true),
   })
   .superRefine((d, ctx) => {

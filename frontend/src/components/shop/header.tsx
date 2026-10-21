@@ -5,7 +5,7 @@ import Form from "next/form";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { cn, formatPrice, whatsappUrl } from "@/lib/format";
-import type { Category } from "@/lib/types";
+import type { Category, StoreConfig } from "@/lib/types";
 import { useAuth, useCart, useStoreConfig } from "@/components/providers";
 import { LogoImage } from "@/components/logo";
 import { BagIcon, CloseIcon, MenuIcon, SearchIcon, UserIcon, WhatsAppIcon } from "./icons";
@@ -121,7 +121,7 @@ export function SiteHeader({ categories }: { categories: Category[] }) {
           <StoreLogo name={config.storeName} />
 
           <nav aria-label="Main" className="hidden min-w-0 items-center lg:flex">
-            {NAV_LINKS.map((l) => (
+            {navLinks(config).map((l) => (
               <Link
                 key={l.href}
                 href={l.href}
@@ -185,6 +185,9 @@ const NAV_LINKS = [
   { href: "/contact", label: "Contact" },
 ];
 
+/** The links to show: Pre-book only while it's switched on in Admin → Settings. */
+const navLinks = (config: StoreConfig) => NAV_LINKS.filter((l) => l.href !== "/prebook" || config.prebookEnabled);
+
 function MobileMenu({ open, onClose, categories }: { open: boolean; onClose: () => void; categories: Category[] }) {
   const config = useStoreConfig();
   const { user } = useAuth();
@@ -227,7 +230,7 @@ function MobileMenu({ open, onClose, categories }: { open: boolean; onClose: () 
             <SearchBox onSubmitted={onClose} />
           </div>
           <nav aria-label="Mobile">
-            {NAV_LINKS.map((l) => (
+            {navLinks(config).map((l) => (
               <Link key={l.href} href={l.href} className={item} onClick={onClose}>
                 {l.label}
               </Link>

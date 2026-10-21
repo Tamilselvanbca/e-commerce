@@ -5,6 +5,7 @@ import { cn, formatPrice } from "@/lib/format";
 import type { CheckoutSummary } from "@/lib/types";
 import { Button, Input } from "@/components/ui";
 import { CheckCircleIcon, GiftIcon, SparkIcon, TagIcon } from "./icons";
+import { CheckoutOffers } from "./offers";
 
 /**
  * Coupon code + gift card entry for the checkout summary. The parent owns the
@@ -40,14 +41,7 @@ export function CheckoutCodes({
           </span>
         </p>
       )}
-      {pricing.offerHint && !pricing.discount && (
-        <p className="flex items-start gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-900">
-          <SparkIcon className="mt-0.5 size-4 text-brand-700" />
-          <span>
-            Add {formatPrice(pricing.offerHint.remaining)} more to get the <span className="font-medium">{pricing.offerHint.title}</span>.
-          </span>
-        </p>
-      )}
+      <CheckoutOffers pricing={pricing} couponCode={couponCode} onApply={onCouponChange} pending={pending} />
 
       <CodeField
         label="Discount code"

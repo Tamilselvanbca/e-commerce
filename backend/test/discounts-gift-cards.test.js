@@ -119,6 +119,46 @@ describe('discount codes', () => {
   });
 });
 
+describe('offers list', () => {
+  test('shows running automatic offers and the coupons marked to show, with eligibility for the cart', async () => {
+    await discount({ code: 'BIG10', title: '10% off big orders', minSubtotal: 250000, maxDiscount: 30000 });
+    await discount({ code: 'FLAT50', title: 'Flat ₹50 off', type: 'fixed', value: 5000 });
+    await discount({ code: 'STAFF', title: 'Staff only', showInOffers: false });
+    await discount({ code: 'OLD', title: 'Expired', endsAt: new Date(Date.now() - 60_000).toISOString() });
+    await discount({ code: null, title: 'Free delivery over ₹400', type: 'free_shipping', value: 0, minSubtotal: 40000 });
+
+    const listed = (await newAgent().get('/api/offers').expect(200)).body.items;
+    assert.deepEqual(listed.map((o) => o.code ?? o.title).sort(), ['BIG10', 'FLAT50', 'Free delivery over ₹400']);
+    assert.equal(listed.find((o) => o.code === 'BIG10').minSubtotal, 250000);
+
+    // Cart: one ₹500 tee + ₹49 shipping.
+    const { offers } = await summary();
+    const by = Object.fromEntries(offers.map((o) => [o.code ?? 'auto', o]));
+    assert.deepEqual(Object.keys(by).sort(), ['BIG10', 'FLAT50', 'auto']);
+    assert.deepEqual([by.FLAT50.eligible, by.FLAT50.saving], [true, 5000]);
+    assert.deepEqual([by.auto.eligible, by.auto.saving], [true, 4900]);
+    assert.deepEqual([by.BIG10.eligible, by.BIG10.remaining], [false, 200000]);
+    assert.equal(offers.at(-1).code, 'BIG10'); // eligible ones first
+
+    // Clicking Apply on a listed coupon is the same as typing it.
+    const applied = await summary({ couponCode: 'FLAT50' });
+    assert.equal(applied.coupon.applied, true);
+    assert.equal(applied.discount, 5000);
+
+    // Four more tees (5 × ₹500 = ₹2,500) unlock the big-order coupon.
+    await agent.post('/api/cart/items').send({ variantId: fx.variants.teeM, quantity: 4 }).expect(200);
+    const big = (await summary()).offers.find((o) => o.code === 'BIG10');
+    assert.deepEqual([big.eligible, big.saving], [true, 25000]);
+  });
+
+  test("leaves out coupons the customer can't use any more", async () => {
+    await discount({ code: 'ONCE', title: 'Welcome', type: 'fixed', value: 1000, perCustomerLimit: 1 });
+    assert.equal((await summary()).offers.length, 1);
+    await placeOrder({ couponCode: 'ONCE' }).expect(201);
+    assert.equal((await summary()).offers.length, 0);
+  });
+});
+
 describe('automatic offers', () => {
   test('apply without a code; the bigger saving wins over a typed code', async () => {
     await discount({ code: null, title: 'Festive offer', value: 5 });

@@ -29,6 +29,7 @@ type Draft = {
   usageLimit: string;
   perCustomerLimit: string;
   firstOrderOnly: boolean;
+  showInOffers: boolean;
   isActive: boolean;
 };
 
@@ -49,6 +50,8 @@ function toDraft(d?: AdminDiscount): Draft {
     usageLimit: d?.usageLimit ? String(d.usageLimit) : "",
     perCustomerLimit: d?.perCustomerLimit ? String(d.perCustomerLimit) : "",
     firstOrderOnly: d?.firstOrderOnly ?? false,
+    // New codes are listed by default; existing ones keep their setting.
+    showInOffers: d?.showInOffers ?? true,
     isActive: d?.isActive ?? true,
   };
 }
@@ -81,6 +84,7 @@ function toInput(d: Draft): { input: DiscountInput; errors: FieldErrors } {
     usageLimit: int(d.usageLimit),
     perCustomerLimit: int(d.perCustomerLimit),
     firstOrderOnly: d.firstOrderOnly,
+    showInOffers: !d.automatic && d.showInOffers,
     isActive: d.isActive,
   };
   return { input, errors };
@@ -390,6 +394,24 @@ export function DiscountForm({ discount }: { discount?: AdminDiscount }) {
             onChange={(e) => set("isActive", e.target.checked)}
           />
           <p className="mt-1 text-xs text-zinc-500">Turn off to pause it without deleting.</p>
+          {draft.automatic ? (
+            <p className="mt-4 text-xs text-zinc-500">
+              Automatic offers are listed to customers under &ldquo;Available offers&rdquo; (product, cart and checkout pages).
+            </p>
+          ) : (
+            <>
+              <Checkbox
+                className="mt-4"
+                label="Show in Available offers"
+                checked={draft.showInOffers}
+                onChange={(e) => set("showInOffers", e.target.checked)}
+              />
+              <p className="mt-1 text-xs text-zinc-500">
+                Customers see this code with an Apply button on product, cart and checkout pages. Turn off for private codes
+                (influencers, staff, apology codes).
+              </p>
+            </>
+          )}
         </Panel>
         {formError && <InlineAlert title="Not saved">{formError}</InlineAlert>}
         <div className="flex gap-2">

@@ -26,21 +26,31 @@ async function buy(agent, variantId) {
 }
 
 describe('reviews', () => {
-  test('only customers with a paid order can review', async () => {
-    const guest = await newAgent().get('/api/products/test-tee/reviews/eligibility').expect(200);
+  test('any signed-in customer can review at any time; guests must log in', async () => {
+    const guest = await newAgent().get('/api/products/test-bag/reviews/eligibility').expect(200);
     assert.equal(guest.body.reason, 'login');
-    await newAgent().post('/api/products/test-tee/reviews').send({ rating: 5, body: 'Lovely and fresh' }).expect(401);
+    await newAgent().post('/api/products/test-bag/reviews').send({ rating: 5, body: 'Lovely and fresh' }).expect(401);
 
-    const before = await buyer.get('/api/products/test-tee/reviews/eligibility').expect(200);
-    assert.equal(before.body.canReview, false);
-    assert.equal(before.body.reason, 'not_purchased');
-    await buyer.post('/api/products/test-tee/reviews').send({ rating: 5, body: 'Lovely and fresh' }).expect(400);
+    const shopper = newAgent();
+    await login(shopper, '9876588888', 'Arun Kumar');
+    const eligibility = await shopper.get('/api/products/test-bag/reviews/eligibility').expect(200);
+    assert.equal(eligibility.body.canReview, true);
+    assert.equal(eligibility.body.verified, false);
+    const review = await shopper.post('/api/products/test-bag/reviews').send({ rating: 4, body: 'Looks lovely, tried it at a friend\'s place.' }).expect(201);
+    assert.equal(review.body.verified, false);
+    assert.equal(review.body.authorName, 'Arun K.');
   });
 
-  test('a verified review updates ratings and can be edited', async () => {
+  test('a review becomes verified after buying, updates ratings and can be edited', async () => {
+    // Reviewed before buying: not verified yet.
+    const early = await buyer.post('/api/products/test-tee/reviews').send({ rating: 3, body: 'Heard good things about this.' }).expect(201);
+    assert.equal(early.body.verified, false);
+
     await buy(buyer, fx.variants.teeM);
     const eligible = await buyer.get('/api/products/test-tee/reviews/eligibility').expect(200);
     assert.equal(eligible.body.canReview, true);
+    assert.equal(eligible.body.verified, true);
+    assert.equal(eligible.body.reason, 'already_reviewed');
 
     await buyer.post('/api/products/test-tee/reviews').send({ rating: 2, body: 'short' }).expect(400);
     const created = await buyer
@@ -71,7 +81,7 @@ describe('reviews', () => {
     await admin.get('/api/admin/reviews').expect(200);
     await buyer.get('/api/admin/reviews').expect(403);
     const { body } = await admin.get('/api/admin/reviews').expect(200);
-    const id = body.items[0].id;
+    const id = body.items.find((r) => r.product?.slug === 'test-tee').id;
 
     await admin.patch(`/api/admin/reviews/${id}`).send({ status: 'hidden' }).expect(200);
     const hidden = await newAgent().get('/api/products/test-tee/reviews').expect(200);

@@ -8,6 +8,7 @@ import type { CartItem } from "@/lib/types";
 import { useAuth, useCart, useStoreConfig, useToast } from "@/components/providers";
 import { Button, ButtonLink, EmptyState, Price, ProductImg } from "@/components/ui";
 import { AlertIcon, BagIcon, ShieldIcon, TrashIcon, WhatsAppIcon } from "@/components/shop/icons";
+import { CartOffers } from "@/components/shop/offers";
 import { QuantityStepper } from "@/components/shop/quantity-stepper";
 import { Notice } from "@/components/shop/section";
 import { estimateShipping } from "@/components/shop/shipping";
@@ -172,6 +173,10 @@ export function CartView() {
               </div>
             </div>
           )}
+
+          <div className="mt-5">
+            <CartOffers subtotal={cart.subtotal} />
+          </div>
 
           <dl className="mt-5 space-y-3 text-sm">
             <div className="flex justify-between">

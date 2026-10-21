@@ -91,11 +91,13 @@ export function SiteFooter({ categories, year }: { categories: Category[]; year:
                   Customer reviews
                 </Link>
               </li>
-              <li>
-                <Link href="/prebook" className={link}>
-                  Pre-book
-                </Link>
-              </li>
+              {config.prebookEnabled && (
+                <li>
+                  <Link href="/prebook" className={link}>
+                    Pre-book
+                  </Link>
+                </li>
+              )}
               <li>
                 <Link href="/bulk-order" className={link}>
                   Bulk & festive orders

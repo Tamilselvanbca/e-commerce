@@ -41,6 +41,8 @@ export type SummaryLine = {
   unitPrice?: number;
   /** Shown instead of size/colour, e.g. a gift card's recipient. */
   detail?: string;
+  /** A link or button under the line, e.g. "Write a review". */
+  action?: React.ReactNode;
 };
 
 export function orderItemLine(item: OrderItem): SummaryLine {
@@ -109,6 +111,7 @@ export function LineItems({ items, currency, className }: { items: SummaryLine[]
                   .filter(Boolean)
                   .join(" · ")}
               </p>
+              {item.action && <div className="mt-1.5">{item.action}</div>}
             </div>
             <p className="shrink-0 text-sm font-medium text-zinc-900">{formatPrice(item.lineTotal, currency)}</p>
           </li>

@@ -103,6 +103,22 @@ describe('admin pre-bookings', () => {
   });
 });
 
+describe('pre-booking switch', () => {
+  test('on by default; when the admin turns it off the store hides it and refuses bookings', async () => {
+    assert.equal((await newAgent().get('/api/config').expect(200)).body.prebookEnabled, true);
+
+    await admin.put('/api/admin/settings').send({ values: { PREBOOK_ENABLED: 'false' } }).expect(200);
+    assert.equal((await newAgent().get('/api/config').expect(200)).body.prebookEnabled, false);
+    const closed = await newAgent().get('/api/prebookings/products').expect(404);
+    assert.equal(closed.body.error.code, 'PREBOOK_CLOSED');
+    await book(newAgent(), { items: [{ variantId: fx.variants.bag, quantity: 1 }] }).expect(404);
+    await admin.get('/api/admin/prebookings').expect(200); // existing bookings stay manageable
+
+    await admin.put('/api/admin/settings').send({ values: { PREBOOK_ENABLED: 'true' } }).expect(200);
+    await newAgent().get('/api/prebookings/products').expect(200);
+  });
+});
+
 describe('product ingredients', () => {
   async function saveTee(changes) {
     const current = (await admin.get(`/api/admin/products/${fx.teeId}`).expect(200)).body;

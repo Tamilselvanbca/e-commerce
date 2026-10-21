@@ -230,13 +230,24 @@ export function orderShippedEmail(order) {
 }
 
 export function orderDeliveredEmail(order) {
+  // One "Write a review" link per product, straight to its review form.
+  const reviewable = [...new Map(order.items.filter((i) => i.productSlug).map((i) => [i.productSlug, i])).values()];
+  const reviewLinks = reviewable
+    .map(
+      (i) => `<tr><td style="padding:6px 0;font-size:14px">${esc(i.productName)}</td>
+        <td style="padding:6px 0;text-align:right"><a href="${config.frontendUrl}/products/${encodeURIComponent(i.productSlug)}#reviews"
+          style="font-size:13px;color:#c2410c;font-weight:bold">Write a review</a></td></tr>`,
+    )
+    .join('');
   return {
     to: order.email,
     subject: `Delivered: ${order.orderNumber}`,
     html: layout('Your order has been delivered', `
       <p style="font-size:14px">Order <strong>${esc(order.orderNumber)}</strong> was delivered. We hope you love it!</p>
+      ${reviewLinks ? `<p style="font-size:14px;margin:20px 0 4px"><strong>How was it?</strong> Your review helps other customers.</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${reviewLinks}</table>` : ''}
       ${orderLink(order)}`),
-    text: `Order ${order.orderNumber} has been delivered.`,
+    text: `Order ${order.orderNumber} has been delivered.${reviewable.length ? ` Review your items: ${reviewable.map((i) => `${config.frontendUrl}/products/${i.productSlug}#reviews`).join(' ')}` : ''}`,
   };
 }
 

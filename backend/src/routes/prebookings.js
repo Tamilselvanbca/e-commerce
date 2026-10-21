@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { config } from '../config.js';
+import { AppError } from '../lib/errors.js';
 import { normalizePhone } from '../lib/util.js';
 import { optionalText, parse } from '../lib/validate.js';
 import { publicFormLimiter } from '../middleware/security.js';
@@ -8,6 +10,12 @@ import { createPrebooking, listPrebookProducts } from '../services/prebookings.j
 import { prebookingCustomerLink } from '../services/whatsapp.js';
 
 const router = Router();
+
+// Switched off in Admin → Settings: no form, no new bookings (admin pages keep working).
+router.use((_req, _res, next) => {
+  if (!config.store.prebookEnabled) throw new AppError(404, 'PREBOOK_CLOSED', 'Pre-booking is not available right now');
+  next();
+});
 
 /** Products for the Pre-book form: everything active, in stock or not. */
 router.get('/products', async (_req, res) => {

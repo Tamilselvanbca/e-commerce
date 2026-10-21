@@ -180,7 +180,25 @@ function OrderView({
           {/* Items */}
           <Card className="p-5 sm:p-6">
             <h3 className="mb-5 text-base font-semibold text-zinc-900">Items</h3>
-            <LineItems items={order.items.map(orderItemLine)} currency={order.currency} />
+            {order.status === "delivered" && order.items.some((i) => i.productSlug) && (
+              <p className="-mt-3 mb-4 text-sm text-zinc-600">Delivered! How was it? Your review helps other customers.</p>
+            )}
+            <LineItems
+              items={order.items.map((item) => ({
+                ...orderItemLine(item),
+                // After delivery: review each product (its review form is on the product page).
+                action:
+                  order.status === "delivered" && item.productSlug ? (
+                    <Link
+                      href={`/products/${encodeURIComponent(item.productSlug)}#reviews`}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-brand-700 underline-offset-4 hover:underline"
+                    >
+                      ★ Write a review
+                    </Link>
+                  ) : undefined,
+              }))}
+              currency={order.currency}
+            />
             <div className="mt-5 border-t border-zinc-200 pt-5">
               <Totals
                 hideShipping={order.kind === "gift_card"}
