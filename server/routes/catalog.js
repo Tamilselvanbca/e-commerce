@@ -34,6 +34,8 @@ router.get('/config', (_req, res) => {
     giftCardPurchase: { min: GIFT_CARD_PURCHASE.min, max: GIFT_CARD_PURCHASE.max },
     // Admin → Settings → Pre-booking: shows or hides the Pre-book page and link.
     prebookEnabled: config.store.prebookEnabled,
+    // Browser key for the address map (pin + autofill); null hides the map.
+    mapsApiKey: config.shipping.mapsApiKey ?? null,
   });
 });
 

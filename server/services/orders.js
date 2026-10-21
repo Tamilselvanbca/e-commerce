@@ -167,7 +167,9 @@ export async function getOrder({ orderNumber, id, userId, admin = false }, db = 
     ),
     query('SELECT status, note, created_at FROM order_status_history WHERE order_id = $1 ORDER BY created_at, id', [o.id], db),
     queryOne(
-      'SELECT provider, courier, awb, tracking_url, shipped_at, delivered_at, provider_shipment_id FROM shipments WHERE order_id = $1',
+      `SELECT provider, courier, awb, tracking_url, shipped_at, delivered_at, provider_order_id, provider_shipment_id,
+              pickup_location, label_url, pickup_scheduled, tracking_status, tracking_updated_at, expected_delivery, last_error
+         FROM shipments WHERE order_id = $1`,
       [o.id],
       db,
     ),
@@ -221,7 +223,9 @@ export async function getOrder({ orderNumber, id, userId, admin = false }, db = 
     shippingAddress: o.shippingAddress,
     items,
     statusHistory: history,
-    shipment: shipment
+    // Customers see the shipment once it has an AWB or has left (a booking still
+    // waiting for its courier is the store's business).
+    shipment: shipment && (admin || shipment.awb || shipment.shippedAt)
       ? {
           provider: shipment.provider,
           courier: shipment.courier,
@@ -229,7 +233,20 @@ export async function getOrder({ orderNumber, id, userId, admin = false }, db = 
           trackingUrl: shipment.trackingUrl,
           shippedAt: shipment.shippedAt,
           deliveredAt: shipment.deliveredAt,
-          ...(admin ? { providerShipmentId: shipment.providerShipmentId } : {}),
+          /** The courier's latest status, e.g. "IN TRANSIT" (Shiprocket). */
+          trackingStatus: shipment.trackingStatus,
+          expectedDelivery: shipment.expectedDelivery,
+          ...(admin
+            ? {
+                providerOrderId: shipment.providerOrderId,
+                providerShipmentId: shipment.providerShipmentId,
+                pickupLocation: shipment.pickupLocation,
+                labelUrl: shipment.labelUrl,
+                pickupScheduled: shipment.pickupScheduled,
+                trackingUpdatedAt: shipment.trackingUpdatedAt,
+                lastError: shipment.lastError,
+              }
+            : {}),
         }
       : null,
     expiresAt: o.expiresAt,
@@ -405,6 +422,8 @@ export async function createOrderFromCart({ user, cartId, address, email, notes,
       state: address.state,
       pincode: address.pincode,
       country: address.country,
+      // Where the customer pinned the door on the map, when they did.
+      ...(address.latitude != null && address.longitude != null ? { latitude: address.latitude, longitude: address.longitude } : {}),
     };
 
     const order = await insertOrder(db, {

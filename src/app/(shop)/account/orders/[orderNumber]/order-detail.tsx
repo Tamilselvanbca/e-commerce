@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { api, ApiError, errorMessage } from "@/lib/api";
-import { cn, formatDate, formatPrice, GATEWAY_LABELS, paymentMethodLabel } from "@/lib/format";
+import { cn, courierStatusLabel, formatCourierDate, formatDate, formatPrice, GATEWAY_LABELS, paymentMethodLabel } from "@/lib/format";
 import type { OnlineGateway, Order, PaymentInit, Shipment, TrackingEvent } from "@/lib/types";
 import { useStoreConfig, useToast } from "@/components/providers";
 import { Button, ButtonLink, Card, EmptyState, Modal } from "@/components/ui";
@@ -23,16 +23,19 @@ import { Notice } from "@/components/shop/section";
 import { useApi } from "@/components/shop/use-api";
 import { usePaymentFlow } from "@/components/shop/use-payment";
 
-type Tracking = { shipment: Shipment | null; events: TrackingEvent[] };
+type Tracking = { shipment: Shipment | null; orderStatus: Order["status"]; events: TrackingEvent[] };
 
 export function OrderDetail({ orderNumber }: { orderNumber: string }) {
   const path = `/orders/${encodeURIComponent(orderNumber)}`;
   const { data: order, error, loading, notFound, reload, mutate } = useApi<Order>(path);
   const tracking = useApi<Tracking>(order?.shipment ? `${path}/tracking` : null);
+  // Reading the courier's scans can move the order on (shipped, delivered).
+  const moved = tracking.data && order && tracking.data.orderStatus !== order.status ? tracking.data.orderStatus : null;
+  const shown = order && moved ? { ...order, status: moved } : order;
 
   if (loading && !order) return <DetailSkeleton />;
 
-  if (!order) {
+  if (!shown) {
     return (
       <EmptyState
         title={notFound ? "Order not found" : "We couldn't load this order"}
@@ -50,7 +53,7 @@ export function OrderDetail({ orderNumber }: { orderNumber: string }) {
     );
   }
 
-  return <OrderView order={order} onChange={(o) => mutate(o)} reload={reload} tracking={tracking.data ?? null} trackingLoading={tracking.loading} />;
+  return <OrderView order={shown} onChange={(o) => mutate(o)} reload={reload} tracking={tracking.data ?? null} trackingLoading={tracking.loading} />;
 }
 
 function OrderView({
@@ -222,6 +225,15 @@ function OrderView({
                 <TruckIcon className="size-5" />
                 Shipment
               </h3>
+              {(shipment.trackingStatus || (!shipment.shippedAt && !shipment.deliveredAt)) && (
+                <p className="mt-3 inline-flex rounded-full bg-violet-50 px-3 py-1 text-sm font-medium text-violet-800 ring-1 ring-inset ring-violet-200">
+                  {shipment.deliveredAt
+                    ? "Delivered"
+                    : shipment.trackingStatus
+                      ? courierStatusLabel(shipment.trackingStatus)
+                      : "Packed, waiting for the courier to collect it"}
+                </p>
+              )}
               <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-3">
                 <div>
                   <dt className="text-zinc-500">Courier</dt>
@@ -231,10 +243,22 @@ function OrderView({
                   <dt className="text-zinc-500">Tracking number (AWB)</dt>
                   <dd className="mt-0.5 break-all font-mono font-medium text-zinc-900">{shipment.awb ?? "—"}</dd>
                 </div>
-                <div>
-                  <dt className="text-zinc-500">{shipment.deliveredAt ? "Delivered" : "Shipped"}</dt>
-                  <dd className="mt-0.5 font-medium text-zinc-900">{formatDate(shipment.deliveredAt ?? shipment.shippedAt)}</dd>
-                </div>
+                {shipment.deliveredAt ? (
+                  <div>
+                    <dt className="text-zinc-500">Delivered</dt>
+                    <dd className="mt-0.5 font-medium text-zinc-900">{formatDate(shipment.deliveredAt)}</dd>
+                  </div>
+                ) : shipment.expectedDelivery ? (
+                  <div>
+                    <dt className="text-zinc-500">Expected delivery</dt>
+                    <dd className="mt-0.5 font-medium text-zinc-900">{formatCourierDate(shipment.expectedDelivery)}</dd>
+                  </div>
+                ) : (
+                  <div>
+                    <dt className="text-zinc-500">Shipped</dt>
+                    <dd className="mt-0.5 font-medium text-zinc-900">{shipment.shippedAt ? formatDate(shipment.shippedAt) : "Not yet"}</dd>
+                  </div>
+                )}
               </dl>
               {shipment.trackingUrl && (
                 <a

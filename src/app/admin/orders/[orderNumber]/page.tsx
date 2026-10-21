@@ -5,9 +5,19 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import { api, ApiError, errorMessage } from "@/lib/api";
 import { useToast } from "@/components/providers";
-import { Badge, Button, Field, Input, Modal, PageLoader, ProductImg, Textarea } from "@/components/ui";
-import { formatDate, formatPrice, GATEWAY_LABELS, ORDER_STATUS_LABELS, paymentMethodLabel, variantLabel } from "@/lib/format";
-import type { AdminOrder, Order, OrderStatus } from "@/lib/types";
+import { Badge, Button, Field, Input, Modal, PageLoader, ProductImg, Select, Textarea } from "@/components/ui";
+import {
+  courierStatusLabel,
+  formatCourierDate,
+  formatDate,
+  formatPrice,
+  GATEWAY_LABELS,
+  mapLink,
+  ORDER_STATUS_LABELS,
+  paymentMethodLabel,
+  variantLabel,
+} from "@/lib/format";
+import type { AdminOrder, CourierOption, Order, OrderStatus, Shipment, ShiprocketPickup } from "@/lib/types";
 import { ConfirmDialog, DangerTextButton } from "@/components/admin/confirm-dialog";
 import { InlineAlert, LoadError } from "@/components/admin/feedback";
 import { useApiQuery } from "@/components/admin/hooks";
@@ -198,6 +208,13 @@ export default function AdminOrderDetailPage() {
               <br />
               <span className="text-zinc-500">Phone: {order.shippingAddress.phone}</span>
             </address>
+            {order.shippingAddress.latitude != null && order.shippingAddress.longitude != null && (
+              <p className="mt-3 text-sm">
+                <ExternalLink href={mapLink(order.shippingAddress.latitude, order.shippingAddress.longitude)}>
+                  Pinned location on Google Maps
+                </ExternalLink>
+              </p>
+            )}
           </Panel>
           )}
 
@@ -358,14 +375,42 @@ function FulfilmentPanel({
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const [busy, setBusy] = useState<"retry" | "track" | null>(null);
+
   const next = NEXT_STATUSES[order.status] ?? [];
   const advance = next.filter((s) => s !== "cancelled");
   const canCancel = next.includes("cancelled");
-  const canShip = ["confirmed", "processing", "shipped"].includes(order.status);
-  const canShiprocket = ["confirmed", "processing"].includes(order.status);
+  const shipment = order.shipment;
+  // Shiprocket: booked (the order exists there) → courier/AWB → pickup and label → tracking.
+  const sr = shipment?.provider === "shiprocket" ? shipment : null;
+  const open = ["confirmed", "processing"].includes(order.status);
+  const canShiprocket = open && order.kind === "goods" && (order.shippingAddress?.country ?? "IN") === "IN" && !sr?.awb;
+  const canRetry = open && Boolean(sr?.awb && sr.lastError);
+  const canTrack = Boolean(sr?.awb) && !shipment?.deliveredAt && ["processing", "shipped"].includes(order.status);
+  // Courier details typed in by hand, unless Shiprocket handles this parcel.
+  const canShip = ["confirmed", "processing", "shipped"].includes(order.status) && !sr?.awb;
   // Orders paid fully by gift card are refunded to the card on cancellation.
   const canRefund = order.status === "cancelled" && order.paymentStatus === "paid" && order.amountDue > 0;
-  const shipment = order.shipment;
+
+  const runShiprocket = async (kind: "retry" | "track") => {
+    setBusy(kind);
+    try {
+      const updated = await api<Order>(`${apiPath}/shiprocket${kind === "track" ? "/track" : ""}`, { method: "POST", body: {} });
+      if (kind === "retry") {
+        if (updated.shipment?.lastError) toast.error(updated.shipment.lastError);
+        else toast.success("Pickup requested and label ready");
+      } else {
+        toast.success(
+          updated.status !== order.status ? `Order is now ${ORDER_STATUS_LABELS[updated.status].toLowerCase()}` : "Tracking is up to date",
+        );
+      }
+      onUpdated(updated);
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const openStatus = (s: OrderStatus) => {
     setTargetStatus(s);
@@ -411,7 +456,9 @@ function FulfilmentPanel({
   const isPaid = order.paymentStatus === "paid";
   const statusDescription: Partial<Record<OrderStatus, React.ReactNode>> = {
     processing: "Use this once you start packing the order.",
-    shipped: "The customer will get a shipping email. To include courier and AWB details, use “Add shipment” instead.",
+    shipped: sr?.awb
+      ? "Use this if the courier has collected the parcel but tracking hasn't caught up. The customer gets a shipping email with the AWB."
+      : "The customer will get a shipping email. To include courier and AWB details, use Shiprocket or “Add shipment manually” instead.",
     delivered: "The customer will get a delivery confirmation email.",
     cancelled: (
       <div className="space-y-2">
@@ -434,29 +481,28 @@ function FulfilmentPanel({
   return (
     <Panel title="Fulfilment">
       <div className="space-y-4">
+        {sr?.lastError && (
+          <InlineAlert tone="warning" title="Shiprocket needs attention">
+            {sr.lastError}
+          </InlineAlert>
+        )}
         {shipment ? (
           <DescriptionList
             items={[
-              { label: "Provider", value: shipment.provider === "shiprocket" ? "Shiprocket" : "Manual" },
+              { label: "Provider", value: sr ? `Shiprocket${sr.providerOrderId ? ` · order ${sr.providerOrderId}` : ""}` : "Manual" },
+              ...(sr?.pickupLocation ? [{ label: "Pickup from", value: sr.pickupLocation }] : []),
               { label: "Courier", value: shipment.courier || "—" },
-              { label: "AWB", value: shipment.awb ? <span className="font-mono">{shipment.awb}</span> : "—" },
+              { label: "AWB", value: shipment.awb ? <span className="font-mono">{shipment.awb}</span> : sr ? "Not assigned yet" : "—" },
+              ...(sr?.awb ? [{ label: "Courier status", value: <CourierStatus shipment={sr} /> }] : []),
+              ...(shipment.expectedDelivery && !shipment.deliveredAt
+                ? [{ label: "Expected", value: formatCourierDate(shipment.expectedDelivery) }]
+                : []),
+              ...(sr?.labelUrl ? [{ label: "Label", value: <ExternalLink href={sr.labelUrl}>Download label (PDF)</ExternalLink> }] : []),
+              { label: "Tracking", value: shipment.trackingUrl ? <ExternalLink href={shipment.trackingUrl}>Open tracking</ExternalLink> : "—" },
               {
-                label: "Tracking",
-                value: shipment.trackingUrl ? (
-                  <a
-                    href={shipment.trackingUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 font-medium text-zinc-900 underline-offset-2 hover:underline"
-                  >
-                    Open tracking <IconExternal className="size-3.5" />
-                    <span className="sr-only">(opens in a new tab)</span>
-                  </a>
-                ) : (
-                  "—"
-                ),
+                label: "Shipped",
+                value: shipment.shippedAt ? formatDate(shipment.shippedAt, true) : sr?.awb ? "Waiting for the courier to collect it" : "—",
               },
-              { label: "Shipped", value: formatDate(shipment.shippedAt, true) },
               { label: "Delivered", value: formatDate(shipment.deliveredAt, true) },
             ]}
           />
@@ -470,18 +516,28 @@ function FulfilmentPanel({
           </p>
         )}
 
-        {(advance.length > 0 || canShip || canShiprocket || canCancel || canRefund) && (
+        {(advance.length > 0 || canShip || canShiprocket || canRetry || canTrack || canCancel || canRefund) && (
           <div className="flex flex-col gap-2">
-            {canShip && (
-              <Button onClick={() => setModal("shipment")}>{shipment?.awb ? "Update shipment" : "Add shipment"}</Button>
-            )}
             {canShiprocket && (
-              <Button variant="outline" onClick={() => setModal("shiprocket")}>
-                Ship with Shiprocket
+              <Button onClick={() => setModal("shiprocket")}>{sr ? "Assign courier" : "Ship with Shiprocket"}</Button>
+            )}
+            {canRetry && (
+              <Button onClick={() => runShiprocket("retry")} loading={busy === "retry"} disabled={busy !== null}>
+                Retry pickup and label
+              </Button>
+            )}
+            {canTrack && (
+              <Button variant="outline" onClick={() => runShiprocket("track")} loading={busy === "track"} disabled={busy !== null}>
+                Refresh tracking
+              </Button>
+            )}
+            {canShip && (
+              <Button variant={canShiprocket ? "outline" : "primary"} onClick={() => setModal("shipment")}>
+                {shipment?.awb ? "Update shipment" : "Add shipment manually"}
               </Button>
             )}
             {advance.map((s) => (
-              <Button key={s} variant={canShip ? "outline" : "primary"} onClick={() => openStatus(s)}>
+              <Button key={s} variant={canShip || canShiprocket || canRetry ? "outline" : "primary"} onClick={() => openStatus(s)}>
                 {STATUS_ACTION_LABEL[s] ?? ORDER_STATUS_LABELS[s]}
               </Button>
             ))}
@@ -546,6 +602,7 @@ function FulfilmentPanel({
       )}
       {modal === "shiprocket" && (
         <ShiprocketModal
+          order={order}
           apiPath={apiPath}
           onClose={() => setModal(null)}
           onSaved={(o) => {
@@ -660,102 +717,317 @@ function ShipmentModal({
   );
 }
 
+function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1 font-medium text-zinc-900 underline-offset-2 hover:underline"
+    >
+      {children} <IconExternal className="size-3.5" />
+      <span className="sr-only">(opens in a new tab)</span>
+    </a>
+  );
+}
+
+/** The courier's latest status, or where the pickup stands before the first scan. */
+function CourierStatus({ shipment }: { shipment: Shipment }) {
+  const status = shipment.trackingStatus;
+  const trouble = status ? /\bRTO\b|RETURN|CANCEL|LOST|DAMAGE/i.test(status) : false;
+  const pickup = shipment.pickupScheduled;
+  return (
+    <span>
+      <span className={trouble ? "font-medium text-amber-800" : undefined}>
+        {status
+          ? courierStatusLabel(status)
+          : pickup
+            ? pickup === "Requested"
+              ? "Pickup requested"
+              : `Pickup on ${formatCourierDate(pickup)}`
+            : "Courier assigned"}
+      </span>
+      {shipment.trackingUpdatedAt && (
+        <span className="block text-xs text-zinc-500">Checked {formatDate(shipment.trackingUpdatedAt, true)}</span>
+      )}
+    </span>
+  );
+}
+
+type Dims = { weight: number; length: number; breadth: number; height: number };
+type PickupsResponse = { items: ShiprocketPickup[]; configured: string; defaults: Dims };
+type CouriersResponse = { recommendedId: number | null; couriers: CourierOption[]; pickup: ShiprocketPickup };
+
+const DIM_FIELDS: { key: keyof Dims; label: string }[] = [
+  { key: "weight", label: "Weight (kg)" },
+  { key: "length", label: "Length (cm)" },
+  { key: "breadth", label: "Breadth (cm)" },
+  { key: "height", label: "Height (cm)" },
+];
+
+/**
+ * Books the parcel with Shiprocket: pickup address and parcel size (sent once,
+ * when the order is created there), then the courier: Shiprocket's pick or one
+ * chosen from the rates. Pickup and label follow automatically.
+ */
 function ShiprocketModal({
+  order,
   apiPath,
   onClose,
   onSaved,
 }: {
+  order: AdminOrder;
   apiPath: string;
   onClose: () => void;
   onSaved: (order: Order) => void;
 }) {
   const toast = useToast();
-  const [dims, setDims] = useState({ weight: "", length: "", breadth: "", height: "" });
+  const booked = order.shipment?.provider === "shiprocket" && Boolean(order.shipment.providerShipmentId);
+  const pickups = useApiQuery<PickupsResponse>("/admin/shipping/shiprocket/pickups");
+  const [pickupChoice, setPickupChoice] = useState<string | null>(null);
+  const [dimEdits, setDimEdits] = useState<Partial<Record<keyof Dims, string>>>({});
+  const [couriers, setCouriers] = useState<CouriersResponse | null>(null);
+  const [courierError, setCourierError] = useState<unknown>(null);
+  const [loadingCouriers, setLoadingCouriers] = useState(false);
+  const [courierId, setCourierId] = useState<number | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   const close = () => {
     if (!saving) onClose();
   };
 
+  const list = pickups.data?.items ?? [];
+  const pickup =
+    pickupChoice ??
+    (booked
+      ? (order.shipment?.pickupLocation ?? "")
+      : list.some((p) => p.name === pickups.data?.configured)
+        ? pickups.data!.configured
+        : (list[0]?.name ?? pickups.data?.configured ?? ""));
+  const dim = (key: keyof Dims) => dimEdits[key] ?? (pickups.data ? String(pickups.data.defaults[key]) : "");
+  const dimValues = () => {
+    const body: Partial<Dims> = {};
+    for (const { key } of DIM_FIELDS) {
+      const n = Number.parseFloat(dim(key));
+      if (Number.isFinite(n) && n > 0) body[key] = n;
+    }
+    return body;
+  };
+
+  const loadCouriers = async () => {
+    setLoadingCouriers(true);
+    setCourierError(null);
+    try {
+      const qs = new URLSearchParams({ pickup, ...(dimValues().weight ? { weight: String(dimValues().weight) } : {}) });
+      setCouriers(await api<CouriersResponse>(`${apiPath}/shiprocket/couriers?${qs}`));
+      setCourierId(null);
+    } catch (err) {
+      setCourierError(err);
+    } finally {
+      setLoadingCouriers(false);
+    }
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const body: Record<string, number> = {};
-    for (const [k, v] of Object.entries(dims)) {
-      const n = Number.parseFloat(v);
-      if (v.trim() && Number.isFinite(n) && n > 0) body[k] = n;
-    }
     setSaving(true);
     setError(null);
     try {
+      const body = { ...(booked ? {} : { pickupLocation: pickup, ...dimValues() }), ...(courierId ? { courierId } : {}) };
       const updated = await api<Order>(`${apiPath}/shiprocket`, { method: "POST", body });
-      toast.success("Shiprocket shipment created");
-      onSaved(updated);
+      if (updated.shipment?.awb) {
+        toast.success(`Booked with ${updated.shipment.courier ?? "the courier"}, AWB ${updated.shipment.awb}`);
+        onSaved(updated);
+      } else {
+        // Booked in Shiprocket, but no courier yet (e.g. wallet balance): say why here.
+        setError(new Error(updated.shipment?.lastError ?? "Shiprocket didn't assign a courier."));
+        onSaved(updated);
+      }
     } catch (err) {
       setError(err);
-      toast.error(err);
     } finally {
       setSaving(false);
     }
   };
 
-  const field = (key: keyof typeof dims, label: string, unit: string) => (
-    <Field label={`${label} (${unit})`} htmlFor={`sr-${key}`}>
-      <Input
-        id={`sr-${key}`}
-        type="number"
-        inputMode="decimal"
-        min="0"
-        step="0.01"
-        value={dims[key]}
-        onChange={(e) => setDims((d) => ({ ...d, [key]: e.target.value }))}
-        placeholder="Default"
-      />
-    </Field>
-  );
+  const changeParcel = (fn: () => void) => {
+    fn();
+    setCouriers(null); // rates depend on the pickup address and weight
+    setCourierId(null);
+  };
 
   return (
     <Modal
       open
       onClose={close}
-      title="Ship with Shiprocket"
+      title={booked ? "Assign a courier" : "Ship with Shiprocket"}
+      size="lg"
       footer={
         <>
           <Button variant="ghost" onClick={close} disabled={saving}>
             Cancel
           </Button>
-          <Button type="submit" form="shiprocket-form" loading={saving}>
-            Create shipment
+          <Button type="submit" form="shiprocket-form" loading={saving} disabled={pickups.isLoading || (!booked && !pickup)}>
+            {booked ? "Assign courier" : "Book shipment"}
           </Button>
         </>
       }
     >
-      <form id="shiprocket-form" onSubmit={submit} className="space-y-4">
+      <form id="shiprocket-form" onSubmit={submit} className="space-y-5">
         <p className="text-sm text-zinc-600">
-          Creates the order in Shiprocket and assigns an AWB. Leave the package details empty to use the store defaults.
+          {booked
+            ? `Order ${order.shipment?.providerOrderId ?? ""} is already in Shiprocket${order.shipment?.pickupLocation ? `, picking up from ${order.shipment.pickupLocation}` : ""}. Assign a courier to get the AWB, pickup and label.`
+            : "Creates the order in Shiprocket, assigns the courier (AWB), books the pickup and makes the label. The order moves to Shipped when the courier collects it, and to Delivered when it arrives."}
         </p>
+
         {error ? (
           <InlineAlert
             title={
-              error instanceof ApiError && error.code === "GATEWAY_ERROR"
-                ? "Shiprocket rejected the request"
-                : "Couldn't create the Shiprocket shipment"
+              error instanceof ApiError
+                ? error.code === "GATEWAY_ERROR"
+                  ? "Shiprocket said no"
+                  : "Couldn't book the shipment"
+                : "Booked in Shiprocket, but no courier yet"
             }
           >
             <p>{errorMessage(error)}</p>
-            {error instanceof ApiError && (
-              <p className="mt-1 font-mono text-xs opacity-80">
-                {error.status} {error.code}
-              </p>
-            )}
           </InlineAlert>
         ) : null}
-        <div className="grid grid-cols-2 gap-3">
-          {field("weight", "Weight", "kg")}
-          {field("length", "Length", "cm")}
-          {field("breadth", "Breadth", "cm")}
-          {field("height", "Height", "cm")}
-        </div>
+
+        {pickups.error ? (
+          <InlineAlert title="Couldn't load your Shiprocket pickup addresses">
+            <p>{errorMessage(pickups.error)}</p>
+            <p className="mt-1">
+              Check the Shiprocket API user in{" "}
+              <Link href="/admin/settings#shipping" className="font-medium underline">
+                Settings → Shipping
+              </Link>
+              .
+            </p>
+          </InlineAlert>
+        ) : null}
+
+        {!booked && (
+          <>
+            <Field
+              label="Pickup address"
+              htmlFor="sr-pickup"
+              hint={list.find((p) => p.name === pickup)?.address || "Where the courier collects the parcel."}
+            >
+              <Select
+                id="sr-pickup"
+                value={pickup}
+                onChange={(e) => changeParcel(() => setPickupChoice(e.target.value))}
+                disabled={pickups.isLoading}
+              >
+                {pickups.isLoading && <option value="">Loading…</option>}
+                {!list.some((p) => p.name === pickup) && pickup && <option value={pickup}>{pickup} (not in Shiprocket)</option>}
+                {list.map((p) => (
+                  <option key={p.name} value={p.name}>
+                    {p.name}
+                    {p.pincode ? ` · ${p.pincode}` : ""}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <fieldset>
+              <legend className="mb-2 text-sm font-medium text-zinc-800">Parcel</legend>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {DIM_FIELDS.map(({ key, label }) => (
+                  <Field key={key} label={label} htmlFor={`sr-${key}`}>
+                    <Input
+                      id={`sr-${key}`}
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="0.01"
+                      value={dim(key)}
+                      onChange={(e) => changeParcel(() => setDimEdits((d) => ({ ...d, [key]: e.target.value })))}
+                    />
+                  </Field>
+                ))}
+              </div>
+            </fieldset>
+          </>
+        )}
+
+        <fieldset>
+          <legend className="mb-2 flex w-full items-center justify-between gap-3 text-sm font-medium text-zinc-800">
+            Courier
+            <Button size="sm" variant="outline" onClick={loadCouriers} loading={loadingCouriers} disabled={!pickup || pickups.isLoading}>
+              {couriers ? "Refresh rates" : "Compare couriers and rates"}
+            </Button>
+          </legend>
+          {courierError ? (
+            <InlineAlert className="mb-2" title="Couldn't load couriers">
+              {errorMessage(courierError)}
+            </InlineAlert>
+          ) : null}
+          <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+            <CourierChoice
+              checked={courierId === null}
+              onChange={() => setCourierId(null)}
+              title="Let Shiprocket choose"
+              detail="Its recommended courier for this route."
+            />
+            {couriers?.couriers.length === 0 && (
+              <p className="text-sm text-zinc-600">No courier delivers to {order.shippingAddress?.pincode} from this pickup address.</p>
+            )}
+            {couriers?.couriers.map((c) => (
+              <CourierChoice
+                key={c.id}
+                checked={courierId === c.id}
+                onChange={() => setCourierId(c.id)}
+                title={c.name}
+                badge={c.id === couriers.recommendedId ? "Recommended" : undefined}
+                detail={[
+                  c.days ? `${c.days} ${c.days === 1 ? "day" : "days"}` : null,
+                  c.etd ? `by ${c.etd}` : null,
+                  c.rating ? `rated ${c.rating.toFixed(1)}` : null,
+                  c.surface ? "surface" : "air",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+                price={formatPrice(c.rate)}
+              />
+            ))}
+          </div>
+        </fieldset>
       </form>
     </Modal>
+  );
+}
+
+function CourierChoice({
+  checked,
+  onChange,
+  title,
+  detail,
+  badge,
+  price,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  title: string;
+  detail: string;
+  badge?: string;
+  price?: string;
+}) {
+  return (
+    <label
+      className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+        checked ? "border-brand-600 bg-brand-50" : "border-zinc-200 hover:bg-zinc-50"
+      }`}
+    >
+      <input type="radio" name="sr-courier" checked={checked} onChange={onChange} className="mt-0.5 size-4 shrink-0 accent-brand-700" />
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-zinc-900">
+          {title}
+          {badge && <Badge className="bg-emerald-50 text-emerald-800 ring-emerald-200">{badge}</Badge>}
+        </span>
+        <span className="block text-xs text-zinc-600">{detail}</span>
+      </span>
+      {price && <span className="shrink-0 text-sm font-semibold tabular-nums text-zinc-900">{price}</span>}
+    </label>
   );
 }

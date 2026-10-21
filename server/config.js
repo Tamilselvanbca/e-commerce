@@ -117,6 +117,9 @@ const schema = z.object({
   SHIPROCKET_DEFAULT_LENGTH_CM: z.coerce.number().default(20),
   SHIPROCKET_DEFAULT_BREADTH_CM: z.coerce.number().default(15),
   SHIPROCKET_DEFAULT_HEIGHT_CM: z.coerce.number().default(5),
+  // Browser key for the address map (Maps JavaScript + Geocoding APIs). Public: it is
+  // sent to the browser, so restrict it to the store's domain in Google Cloud.
+  GOOGLE_MAPS_API_KEY: optionalString,
 
   // WhatsApp
   WHATSAPP_NUMBER: optionalString, // business number in international format without '+', e.g. 919876543210
@@ -319,6 +322,7 @@ function build(source, level = 'boot') {
           height: env.SHIPROCKET_DEFAULT_HEIGHT_CM,
         },
       },
+      mapsApiKey: env.GOOGLE_MAPS_API_KEY,
     },
 
     whatsapp: {

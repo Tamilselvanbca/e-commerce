@@ -174,6 +174,21 @@ export const MapPinIcon = (p: IconProps) => (
   </Svg>
 );
 
+/** A solid map pin (for the centre of the address map). */
+export const PinDropIcon = (p: IconProps) => (
+  <Svg {...p} filled>
+    <path d="M12 2a7.5 7.5 0 0 0-7.5 7.5C4.5 15.4 12 22 12 22s7.5-6.6 7.5-12.5A7.5 7.5 0 0 0 12 2Zm0 10.25a2.75 2.75 0 1 1 0-5.5 2.75 2.75 0 0 1 0 5.5Z" />
+  </Svg>
+);
+
+export const CrosshairIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="7" />
+    <circle cx="12" cy="12" r="2.5" />
+    <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+  </Svg>
+);
+
 export const MailIcon = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="5" width="18" height="14" rx="2" />

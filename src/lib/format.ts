@@ -134,6 +134,24 @@ export function formatDate(iso: string | null | undefined, withTime = false): st
   }).format(new Date(iso));
 }
 
+/** A courier status such as "IN TRANSIT" or "RTO INITIATED" → "In transit", "RTO initiated". */
+export function courierStatusLabel(status: string): string {
+  const words = status.trim().toLowerCase().replace(/[_-]+/g, " ").split(/\s+/);
+  return words.map((w, i) => (w === "rto" || w === "awb" ? w.toUpperCase() : i === 0 ? capitalize(w) : w)).join(" ");
+}
+
+/** A courier's date ("2026-10-25 18:00:00" or "Oct 25, 2026") as "25 Oct 2026"; unknown formats as given. */
+export function formatCourierDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(/^\d{4}-\d{2}-\d{2} /.test(value) ? value.replace(" ", "T") : value);
+  return Number.isNaN(d.getTime()) ? value : formatDate(d.toISOString());
+}
+
+/** A Google Maps link to a pinned spot. */
+export function mapLink(lat: number, lng: number): string {
+  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+}
+
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   pending: "Awaiting payment",
   confirmed: "Confirmed",

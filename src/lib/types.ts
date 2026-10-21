@@ -42,6 +42,8 @@ export type StoreConfig = {
   giftCardPurchase: { min: number; max: number };
   /** Admin → Settings → Pre-booking: the Pre-book page and menu link. */
   prebookEnabled: boolean;
+  /** Google Maps browser key for the address map; null = no map. */
+  mapsApiKey: string | null;
 };
 
 export type Category = {
@@ -188,6 +190,9 @@ export type Address = {
   state: string;
   pincode: string;
   country: string;
+  /** Where the customer pinned the door on the map (both or neither). */
+  latitude?: number | null;
+  longitude?: number | null;
   isDefault: boolean;
 };
 
@@ -244,8 +249,36 @@ export type Shipment = {
   courier: string | null;
   awb: string | null;
   trackingUrl: string | null;
+  /** When the courier collected it (null while waiting for pickup). */
   shippedAt: string | null;
   deliveredAt: string | null;
+  /** The courier's latest status, e.g. "IN TRANSIT" (Shiprocket). */
+  trackingStatus?: string | null;
+  expectedDelivery?: string | null;
+  // Admin endpoints only:
+  providerOrderId?: string | null;
+  providerShipmentId?: string | null;
+  pickupLocation?: string | null;
+  /** Shipping label PDF to print. */
+  labelUrl?: string | null;
+  pickupScheduled?: string | null;
+  trackingUpdatedAt?: string | null;
+  /** Why the last Shiprocket step failed (booking again retries it). */
+  lastError?: string | null;
+};
+
+/** A pickup address saved in Shiprocket. */
+export type ShiprocketPickup = { name: string; address: string; pincode: string | null; phone: string | null };
+
+/** A courier that can take a parcel; rate in paise. */
+export type CourierOption = {
+  id: number;
+  name: string;
+  rate: number;
+  etd: string | null;
+  days: number | null;
+  rating: number | null;
+  surface: boolean;
 };
 
 export type Order = OrderSummary & {
@@ -589,8 +622,8 @@ export type SettingField = {
   suffix?: string;
   required?: boolean;
   checkboxLabel?: string;
-  lookup?: "twilioVerifyTemplates";
-  webhook?: "razorpay" | "stripe";
+  lookup?: "twilioVerifyTemplates" | "shiprocketPickups";
+  webhook?: "razorpay" | "stripe" | "courier";
   source: SettingSource;
   /** Raw value (money in paise, booleans "true"/"false"); always null for secrets. */
   value: string | null;
@@ -603,7 +636,7 @@ export type SettingsGroup = { id: string; title: string; description?: string; f
 
 export type AdminSettings = {
   groups: SettingsGroup[];
-  webhooks: { razorpay: string; stripe: string };
+  webhooks: { razorpay: string; stripe: string; courier: string };
   server: {
     environment: string;
     frontendUrl: string;

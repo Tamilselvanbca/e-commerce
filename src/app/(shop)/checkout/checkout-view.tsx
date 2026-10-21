@@ -10,7 +10,7 @@ import { useAuth, useToast } from "@/components/providers";
 import { Badge, Button, ButtonLink, EmptyState, Field, Input, Textarea } from "@/components/ui";
 import { AddressForm, AddressLines } from "@/components/shop/address-form";
 import { CheckoutCodes } from "@/components/shop/checkout-codes";
-import { BagIcon, GiftIcon, PlusIcon, ShieldIcon } from "@/components/shop/icons";
+import { BagIcon, GiftIcon, PencilIcon, PlusIcon, ShieldIcon } from "@/components/shop/icons";
 import { GATEWAY_OPTIONS, LineItems, Totals } from "@/components/shop/order-bits";
 import { Notice } from "@/components/shop/section";
 import { useApi } from "@/components/shop/use-api";
@@ -103,6 +103,7 @@ function CheckoutForm({
     () => initialAddresses.find((a) => a.isDefault)?.id ?? initialAddresses[0]?.id ?? null,
   );
   const [adding, setAdding] = useState(initialAddresses.length === 0);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [email, setEmail] = useState(user.email ?? "");
   const [emailError, setEmailError] = useState<string | null>(null);
   // Codes the customer applied; they're part of the pricing request below. A coupon
@@ -143,8 +144,11 @@ function CheckoutForm({
       const rest = list.filter((a) => a.id !== address.id).map((a) => (address.isDefault ? { ...a, isDefault: false } : a));
       return address.isDefault ? [address, ...rest] : [...rest, address];
     });
+    // An edit can change the country or PIN code, and so the delivery charge.
+    if (address.id === addressId) quote.reload();
     setAddressId(address.id);
     setAdding(false);
+    setEditingId(null);
     toast.success("Address saved");
   }
 
@@ -222,6 +226,7 @@ function CheckoutForm({
     (summary.gateways.length > 0 || coveredByGiftCard) &&
     Boolean(addressId) &&
     !adding &&
+    !editingId &&
     !quote.loading;
 
   return (
@@ -262,7 +267,7 @@ function CheckoutForm({
           step={2}
           title="Delivery address"
           action={
-            !adding && addresses.length > 0 ? (
+            !adding && !editingId && addresses.length > 0 ? (
               <Button variant="ghost" size="sm" onClick={() => setAdding(true)}>
                 <PlusIcon className="size-4" />
                 Add new
@@ -276,27 +281,53 @@ function CheckoutForm({
               <div className="grid gap-3 sm:grid-cols-2">
                 {addresses.map((a) => {
                   const checked = a.id === addressId;
-                  return (
-                    <label
-                      key={a.id}
-                      className={cn(
-                        "relative flex cursor-pointer gap-3 rounded-xl border p-4 transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-zinc-900",
-                        checked ? "border-brand-700 bg-brand-50 ring-1 ring-brand-700" : "border-zinc-200 hover:border-zinc-400",
-                      )}
-                    >
-                      <input
-                        type="radio"
-                        name="address"
-                        value={a.id}
-                        checked={checked}
-                        onChange={() => setAddressId(a.id)}
-                        className="mt-1 size-4 shrink-0 accent-brand-700"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <AddressLines address={a} />
-                        {a.isDefault && <Badge className="mt-2 bg-brand-700 text-white ring-brand-700">Default</Badge>}
+                  if (a.id === editingId) {
+                    return (
+                      <div key={a.id} className="rounded-xl border border-brand-700 p-4 ring-1 ring-brand-700 sm:col-span-2">
+                        <h3 className="mb-4 text-sm font-semibold text-zinc-900">Edit address</h3>
+                        <AddressForm
+                          address={a}
+                          onSaved={onAddressSaved}
+                          onCancel={() => setEditingId(null)}
+                          submitLabel="Save and deliver here"
+                        />
                       </div>
-                    </label>
+                    );
+                  }
+                  return (
+                    <div key={a.id} className="relative">
+                      <label
+                        className={cn(
+                          "relative flex h-full cursor-pointer gap-3 rounded-xl border p-4 pr-16 transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-zinc-900",
+                          checked ? "border-brand-700 bg-brand-50 ring-1 ring-brand-700" : "border-zinc-200 hover:border-zinc-400",
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name="address"
+                          value={a.id}
+                          checked={checked}
+                          onChange={() => setAddressId(a.id)}
+                          className="mt-1 size-4 shrink-0 accent-brand-700"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <AddressLines address={a} />
+                          {a.isDefault && <Badge className="mt-2 bg-brand-700 text-white ring-brand-700">Default</Badge>}
+                        </div>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAdding(false);
+                          setEditingId(a.id);
+                        }}
+                        className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-brand-800 hover:bg-brand-100"
+                        aria-label={`Edit the address for ${a.fullName}, ${a.line1}`}
+                      >
+                        <PencilIcon className="size-3.5" />
+                        Edit
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -457,8 +488,10 @@ function CheckoutForm({
           <Button size="lg" className="mt-5 w-full" onClick={placeOrder} loading={busy} disabled={!canPlace}>
             {busy ? "Processing…" : coveredByGiftCard ? "Place order" : "Place order & pay"}
           </Button>
-          {adding && addresses.length > 0 && (
-            <p className="mt-2 text-center text-xs text-zinc-500">Save or cancel the new address to continue.</p>
+          {((adding && addresses.length > 0) || editingId) && (
+            <p className="mt-2 text-center text-xs text-zinc-500">
+              Save or cancel the {editingId ? "address you're editing" : "new address"} to continue.
+            </p>
           )}
           <p className="mt-4 flex items-center justify-center gap-2 text-xs text-zinc-500">
             <ShieldIcon className="size-4" />
