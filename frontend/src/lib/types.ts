@@ -352,6 +352,8 @@ export type CartOffer = Offer & {
   remaining: number;
   /** Paise it would save on this cart (0 when not eligible). */
   saving: number;
+  /** Why this customer can't use it (already used, first order only…), or null. */
+  unavailable: string | null;
 };
 
 export type CheckoutSummary = {

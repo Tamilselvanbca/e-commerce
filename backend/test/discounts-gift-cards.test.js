@@ -151,11 +151,33 @@ describe('offers list', () => {
     assert.deepEqual([big.eligible, big.saving], [true, 25000]);
   });
 
-  test("leaves out coupons the customer can't use any more", async () => {
-    await discount({ code: 'ONCE', title: 'Welcome', type: 'fixed', value: 1000, perCustomerLimit: 1 });
-    assert.equal((await summary()).offers.length, 1);
-    await placeOrder({ couponCode: 'ONCE' }).expect(201);
-    assert.equal((await summary()).offers.length, 0);
+  test("explains offers the customer can't use, in the cart and at checkout", async () => {
+    // ₹100 off beats 10% (₹50) of the ₹500 cart, so the order below uses ONCE.
+    await discount({ code: 'ONCE', title: 'Once per customer', type: 'fixed', value: 10000, perCustomerLimit: 1 });
+    await discount({ code: null, title: 'First order', value: 10, firstOrderOnly: true });
+    let offers = (await agent.get('/api/offers/cart').expect(200)).body.items;
+    assert.deepEqual(offers.map((o) => [o.code ?? o.title, o.eligible, o.unavailable]), [
+      ['ONCE', true, null],
+      ['First order', true, null],
+    ]);
+
+    // After a paid order with ONCE: first-order offer and ONCE no longer apply, and say why.
+    const res = await placeOrder({ couponCode: 'ONCE' }).expect(201);
+    await payMock(res);
+    await agent.post('/api/cart/items').send({ variantId: fx.variants.teeM, quantity: 1 }).expect(200);
+    for (const list of [(await agent.get('/api/offers/cart').expect(200)).body.items, (await summary()).offers]) {
+      const by = Object.fromEntries(list.map((o) => [o.code ?? o.title, o]));
+      assert.equal(by.ONCE.eligible, false);
+      assert.match(by.ONCE.unavailable, /already used/);
+      assert.equal(by['First order'].eligible, false);
+      assert.match(by['First order'].unavailable, /first order/);
+    }
+
+    // A guest's cart can't know the customer yet: offers show as usable.
+    const guest = newAgent();
+    await guest.post('/api/cart/items').send({ variantId: fx.variants.teeM, quantity: 1 }).expect(200);
+    const guestOffers = (await guest.get('/api/offers/cart').expect(200)).body.items;
+    assert.ok(guestOffers.every((o) => o.eligible));
   });
 });
 

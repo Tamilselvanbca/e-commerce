@@ -143,11 +143,11 @@ function offer(d) {
 
 /**
  * Offers customers can see while they run: automatic offers, and coupon codes
- * the admin marked "show in offers". Without `ctx` (product and cart pages) it
- * lists them all, minus fully redeemed ones. With a checkout `ctx` each offer
- * says whether it applies to this cart (`eligible`, `saving`) or how much more
- * the cart needs (`remaining`); offers this customer can't use at all (wrong
- * region, already used, not their first order…) are left out. Best first.
+ * the admin marked "show in offers". Fully redeemed ones are left out. Without
+ * `ctx` (product page) it just lists them. With a cart `ctx` each offer says
+ * whether it applies (`eligible`, `saving`), how much more the cart needs
+ * (`remaining`), or why this customer can't use it (`unavailable`: already
+ * used, first order only, other region…). Usable first.
  */
 export async function listOffers(ctx = null, db = pool) {
   const rows = await query(
@@ -166,17 +166,20 @@ export async function listOffers(ctx = null, db = pool) {
       continue;
     }
     const problem = await ineligibility(d, ctx, db);
-    if (problem && problem.reason !== 'MIN_SUBTOTAL') continue;
-    // Below the minimum: only list it if nothing else would stop it once the cart gets there.
-    if (problem && (await ineligibility(d, { ...ctx, subtotal: d.minSubtotal }, db))) continue;
+    // Below the minimum: also check what would stop it once the cart gets there.
+    const blocker = problem?.reason === 'MIN_SUBTOTAL' ? await ineligibility(d, { ...ctx, subtotal: d.minSubtotal }, db) : problem;
+    if (blocker?.reason === 'USAGE_LIMIT') continue;
+    const unavailable = blocker ? blocker.message : null;
     offers.push({
       ...offer(d),
       eligible: !problem,
-      remaining: problem ? d.minSubtotal - ctx.subtotal : 0,
+      remaining: problem && !unavailable ? d.minSubtotal - ctx.subtotal : 0,
       saving: problem ? 0 : discountAmount(d, ctx.subtotal, ctx.shippingFee),
+      unavailable,
     });
   }
-  if (ctx) offers.sort((a, b) => Number(b.eligible) - Number(a.eligible) || b.saving - a.saving || a.remaining - b.remaining);
+  const rank = (o) => (o.eligible ? 0 : o.unavailable ? 2 : 1);
+  if (ctx) offers.sort((a, b) => rank(a) - rank(b) || b.saving - a.saving || a.remaining - b.remaining);
   return offers;
 }
 
