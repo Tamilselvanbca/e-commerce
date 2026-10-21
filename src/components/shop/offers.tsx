@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { cn, formatPrice, offerBenefit, offerTerms } from "@/lib/format";
-import type { CheckoutSummary, Offer } from "@/lib/types";
+import type { CartOffer, CheckoutSummary, Offer } from "@/lib/types";
 import { useAuth } from "@/components/providers";
 import { Button } from "@/components/ui";
 import { CheckCircleIcon, TagIcon } from "./icons";
@@ -16,13 +16,20 @@ type OfferAction =
   | { kind: "applied"; saving?: number }
   | { kind: "auto" }
   | { kind: "locked"; remaining: number; progress: number }
+  | { kind: "unavailable"; message: string }
   | { kind: "info" };
 
-/** One offer, coupon-style: benefit, terms, code chip and its state (Apply, Applied, add ₹X more). */
+/** One offer, coupon-style: benefit, terms, code chip and its state (Apply, Applied, add ₹X more, why not). */
 function OfferCard({ offer, action }: { offer: Offer; action: OfferAction }) {
   const applied = action.kind === "applied";
+  const unavailable = action.kind === "unavailable";
   return (
-    <div className={cn("rounded-xl border p-3", applied ? "border-emerald-300 bg-emerald-50/70" : "border-dashed border-brand-300 bg-white")}>
+    <div
+      className={cn(
+        "rounded-xl border p-3",
+        applied ? "border-emerald-300 bg-emerald-50/70" : unavailable ? "border-zinc-200 bg-zinc-50 opacity-75" : "border-dashed border-brand-300 bg-white",
+      )}
+    >
       <div className="flex items-start gap-3">
         <span
           className={cn(
@@ -67,6 +74,7 @@ function OfferCard({ offer, action }: { offer: Offer; action: OfferAction }) {
           {action.kind === "auto" && <p className="max-w-24 text-xs font-medium text-emerald-700">Applies automatically</p>}
         </div>
       </div>
+      {unavailable && <p className="mt-2 pl-11 text-xs font-medium text-zinc-600">{action.message}</p>}
       {action.kind === "locked" && (
         <div className="mt-2.5 pl-11">
           <div className="h-1.5 overflow-hidden rounded-full bg-zinc-200" aria-hidden="true">
@@ -137,27 +145,27 @@ export function ProductOffers({ offers }: { offers: Offer[] }) {
   );
 }
 
-/** Cart: offers against the cart subtotal; Apply goes to checkout with the coupon applied. */
+/**
+ * Cart: offers checked against the cart and (when logged in) the customer, so
+ * "applies automatically" holds at checkout. Apply goes to checkout with the coupon.
+ */
 export function CartOffers({ subtotal }: { subtotal: number }) {
   const router = useRouter();
   const { user } = useAuth();
-  const { data } = useApi<{ items: Offer[] }>("/offers");
-  const offers = data?.items ?? [];
+  // The subtotal (and who's logged in) in the path re-checks the offers when they change.
+  const { data } = useApi<{ items: CartOffer[] }>(`/offers/cart?s=${subtotal}&u=${user?.id ?? "guest"}`);
   const applyHref = (code: string) => {
     const next = `/checkout?coupon=${encodeURIComponent(code)}`;
     return user ? next : loginHref(next);
   };
-  const cards = offers
-    .map((offer) => {
-      const eligible = subtotal >= offer.minSubtotal;
-      const action: OfferAction = !eligible
-        ? { kind: "locked", remaining: offer.minSubtotal - subtotal, progress: progress(subtotal, offer.minSubtotal) }
-        : offer.code
-          ? { kind: "apply", onApply: () => router.push(applyHref(offer.code!)) }
-          : { kind: "auto" };
-      return { offer, action, eligible };
-    })
-    .sort((a, b) => Number(b.eligible) - Number(a.eligible));
+  const cards = (data?.items ?? []).map((offer) => {
+    let action: OfferAction;
+    if (offer.unavailable) action = { kind: "unavailable", message: offer.unavailable };
+    else if (!offer.eligible) action = { kind: "locked", remaining: offer.remaining, progress: progress(subtotal, offer.minSubtotal) };
+    else if (offer.code) action = { kind: "apply", onApply: () => router.push(applyHref(offer.code!)), saving: offer.saving };
+    else action = { kind: "auto" };
+    return { offer, action };
+  });
   return <OfferStack cards={cards} limit={2} />;
 }
 
@@ -176,7 +184,9 @@ export function CheckoutOffers({
   const cards = pricing.offers.map((offer) => {
     const applied = pricing.appliedDiscount?.id === offer.id;
     let action: OfferAction;
-    if (!offer.eligible) {
+    if (offer.unavailable) {
+      action = { kind: "unavailable", message: offer.unavailable };
+    } else if (!offer.eligible) {
       action = { kind: "locked", remaining: offer.remaining, progress: progress(pricing.subtotal, offer.minSubtotal) };
     } else if (applied) {
       action = { kind: "applied", saving: pricing.appliedDiscount?.amount };
