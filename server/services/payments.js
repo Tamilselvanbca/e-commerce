@@ -35,7 +35,7 @@ async function recordPayment(order, gateway, gatewayOrderId, raw) {
 // ---------------------------------------------------------------------------
 // Razorpay (REST API, https://razorpay.com/docs/api/orders/)
 // ---------------------------------------------------------------------------
-async function razorpayRequest(method, path, body) {
+async function razorpayRequest(method, path, body, { timeoutMs = 15_000 } = {}) {
   const { keyId, keySecret } = config.razorpay;
   const res = await fetch(`https://api.razorpay.com/v1${path}`, {
     method,
@@ -44,7 +44,7 @@ async function razorpayRequest(method, path, body) {
       'content-type': 'application/json',
     },
     body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -52,6 +52,91 @@ async function razorpayRequest(method, path, body) {
     throw gatewayError(data?.error?.description ?? 'Could not start the Razorpay payment');
   }
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// How the customer paid (card, UPI, net banking, wallet…), shown on order pages
+// ---------------------------------------------------------------------------
+/** "rahul@okhdfcbank" -> "ra***@okhdfcbank". */
+const maskVpa = (vpa) => {
+  if (!vpa) return null;
+  const [name, handle] = String(vpa).split('@');
+  return `${name.slice(0, 2)}***${handle ? `@${handle}` : ''}`;
+};
+
+/** Method summary from a Razorpay payment entity (Razorpay only exposes a card's last 4 digits). */
+export function razorpayMethodDetails(p) {
+  if (!p?.method) return null;
+  switch (p.method) {
+    case 'card':
+    case 'emi':
+      return {
+        method: p.method,
+        network: p.card?.network ?? null,
+        cardType: p.card?.type ?? null,
+        last4: p.card?.last4 ?? null,
+        issuer: p.card?.issuer ?? null,
+      };
+    case 'upi':
+      return { method: 'upi', vpa: maskVpa(p.vpa ?? p.upi?.vpa) };
+    case 'netbanking':
+      return { method: 'netbanking', bank: p.bank ?? null };
+    case 'wallet':
+      return { method: 'wallet', wallet: p.wallet ?? null };
+    default:
+      return { method: p.method }; // paylater, cardless_emi, bank_transfer…
+  }
+}
+
+/** Method summary from a Stripe charge's payment_method_details. */
+function stripeMethodDetails(d) {
+  if (!d?.type) return null;
+  if (d.type === 'card') {
+    return { method: 'card', network: d.card?.brand ?? null, cardType: d.card?.funding ?? null, last4: d.card?.last4 ?? null, issuer: null };
+  }
+  return { method: d.type };
+}
+
+/** Stores how a payment was made (order pages fall back to the gateway name without it). */
+export async function savePaymentMethod(gateway, gatewayOrderId, details) {
+  if (!details || !gatewayOrderId) return;
+  await query('UPDATE payments SET method_details = $3 WHERE gateway = $1 AND gateway_order_id = $2', [
+    gateway,
+    gatewayOrderId,
+    JSON.stringify(details),
+  ]);
+}
+
+// Payments whose lookup failed this run; not retried, so an unreachable gateway can't slow order pages.
+const lookupFailed = new Set();
+
+/**
+ * Asks the gateway how a paid payment was made and stores it. Never throws:
+ * returns the details, or null when they can't be found.
+ */
+export async function resolvePaymentMethod({ gateway, gatewayOrderId, gatewayPaymentId }) {
+  if (gateway === 'mock') {
+    const details = { method: 'test' };
+    await savePaymentMethod(gateway, gatewayOrderId, details);
+    return details;
+  }
+  // Tests run with placeholder gateway keys: no calls to the real APIs.
+  if (!gatewayPaymentId || config.isTest || lookupFailed.has(gatewayPaymentId)) return null;
+  try {
+    let details = null;
+    if (gateway === 'razorpay' && config.razorpay.enabled) {
+      details = razorpayMethodDetails(await razorpayRequest('GET', `/payments/${encodeURIComponent(gatewayPaymentId)}`, null, { timeoutMs: 5000 }));
+    } else if (gateway === 'stripe' && config.stripe.enabled) {
+      const intent = await stripe().paymentIntents.retrieve(gatewayPaymentId, { expand: ['latest_charge'] });
+      details = stripeMethodDetails(intent.latest_charge?.payment_method_details);
+    }
+    if (details) await savePaymentMethod(gateway, gatewayOrderId, details);
+    return details;
+  } catch (err) {
+    lookupFailed.add(gatewayPaymentId);
+    logger.warn({ err: err.message, gateway, gatewayPaymentId }, 'Could not look up the payment method');
+    return null;
+  }
 }
 
 /** Verifies the checkout handler signature: HMAC_SHA256(order_id|payment_id, key_secret). */

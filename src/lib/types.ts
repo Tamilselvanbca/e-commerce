@@ -270,9 +270,28 @@ export type Order = OrderSummary & {
   shipment: Shipment | null;
   expiresAt: string | null;
   paidAt: string | null;
+  /** How it was paid (card, UPI, net banking…), when the gateway said. */
+  paymentMethod: PaymentMethodDetails | null;
   cancelledAt: string | null;
   canPay: boolean;
   canCancel: boolean;
+};
+
+/** From the gateway: card network and last 4 digits, masked UPI ID, net banking bank, wallet. */
+export type PaymentMethodDetails = {
+  /** card, upi, netbanking, wallet, emi, paylater, test… */
+  method: string;
+  network?: string | null;
+  /** credit, debit, prepaid */
+  cardType?: string | null;
+  last4?: string | null;
+  /** Issuing bank code, e.g. HDFC */
+  issuer?: string | null;
+  /** Net banking bank code, e.g. ICIC */
+  bank?: string | null;
+  wallet?: string | null;
+  /** Masked, e.g. ra***@okhdfcbank */
+  vpa?: string | null;
 };
 
 export type AdminOrder = Order & {
@@ -284,6 +303,7 @@ export type AdminOrder = Order & {
     amount: number;
     status: "created" | "paid" | "failed";
     error: string | null;
+    methodDetails: PaymentMethodDetails | null;
     createdAt: string;
   }[];
 };

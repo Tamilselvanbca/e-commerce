@@ -4,7 +4,7 @@ import { AppError, badRequest, notFound } from '../lib/errors.js';
 import { parse } from '../lib/validate.js';
 import { requireAuth } from '../middleware/auth.js';
 import { markOrderPaid, markPaymentFailed, requireOrder } from '../services/orders.js';
-import { assertGatewayEnabled, findPayment, stripe, verifyRazorpaySignature } from '../services/payments.js';
+import { assertGatewayEnabled, findPayment, resolvePaymentMethod, stripe, verifyRazorpaySignature } from '../services/payments.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -39,6 +39,8 @@ router.post('/razorpay/verify', async (req, res) => {
     gatewayOrderId: body.razorpayOrderId,
     gatewayPaymentId: body.razorpayPaymentId,
   });
+  // Card / UPI / net banking details for the order page.
+  await resolvePaymentMethod({ gateway: 'razorpay', gatewayOrderId: body.razorpayOrderId, gatewayPaymentId: body.razorpayPaymentId });
   res.json({ order: await requireOrder({ id: order.id, userId: req.user.id }) });
 });
 
@@ -78,13 +80,9 @@ router.post('/stripe/verify', async (req, res) => {
   if (session.metadata?.orderId !== payment.orderId) throw badRequest('Session does not match this order');
 
   if (session.payment_status === 'paid') {
-    await markOrderPaid({
-      orderId: payment.orderId,
-      gateway: 'stripe',
-      gatewayOrderId: session.id,
-      gatewayPaymentId: typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id,
-      amount: session.amount_total,
-    });
+    const gatewayPaymentId = typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id;
+    await markOrderPaid({ orderId: payment.orderId, gateway: 'stripe', gatewayOrderId: session.id, gatewayPaymentId, amount: session.amount_total });
+    await resolvePaymentMethod({ gateway: 'stripe', gatewayOrderId: session.id, gatewayPaymentId });
   }
   // Otherwise (e.g. async payment methods still processing) the webhook will complete it.
   res.json({ order: await requireOrder({ id: payment.orderId, userId: req.user.id }) });
@@ -100,6 +98,7 @@ router.post('/mock/complete', async (req, res) => {
   const payment = await ownPayment(req, 'mock', body.mockPaymentId, body.orderNumber);
   if (body.outcome === 'success') {
     await markOrderPaid({ orderId: payment.orderId, gateway: 'mock', gatewayOrderId: body.mockPaymentId, gatewayPaymentId: `${body.mockPaymentId}_pay` });
+    await resolvePaymentMethod({ gateway: 'mock', gatewayOrderId: body.mockPaymentId });
   } else {
     await markPaymentFailed({ gateway: 'mock', gatewayOrderId: body.mockPaymentId, error: 'Simulated payment failure' });
   }

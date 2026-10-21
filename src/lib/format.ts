@@ -1,5 +1,5 @@
 import { twMerge } from "tailwind-merge";
-import type { Offer, OrderStatus, PaymentStatus } from "./types";
+import type { Offer, OrderStatus, PaymentMethodDetails, PaymentStatus } from "./types";
 
 /** Formats paise as currency: 129900 -> "₹1,299". Shows decimals only when needed. */
 export function formatPrice(paise: number, currency = "INR"): string {
@@ -39,6 +39,84 @@ export function offerTerms(o: Pick<Offer, "minSubtotal" | "firstOrderOnly" | "re
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+// Razorpay bank codes (IFSC prefixes) for net banking and card issuers.
+const BANKS: Record<string, string> = {
+  SBIN: "State Bank of India",
+  HDFC: "HDFC Bank",
+  ICIC: "ICICI Bank",
+  UTIB: "Axis Bank",
+  KKBK: "Kotak Mahindra Bank",
+  YESB: "Yes Bank",
+  IDFB: "IDFC FIRST Bank",
+  INDB: "IndusInd Bank",
+  PUNB: "Punjab National Bank",
+  BARB: "Bank of Baroda",
+  CNRB: "Canara Bank",
+  UBIN: "Union Bank of India",
+  BKID: "Bank of India",
+  IOBA: "Indian Overseas Bank",
+  IDIB: "Indian Bank",
+  FDRL: "Federal Bank",
+  CIUB: "City Union Bank",
+  KVBL: "Karur Vysya Bank",
+  TMBL: "Tamilnad Mercantile Bank",
+  SIBL: "South Indian Bank",
+  AUBL: "AU Small Finance Bank",
+  RATN: "RBL Bank",
+};
+const bankName = (code: string) => BANKS[code.toUpperCase().replace(/_R$|_C$/, "")] ?? code;
+
+const CARD_NETWORKS: Record<string, string> = {
+  visa: "Visa",
+  mastercard: "Mastercard",
+  rupay: "RuPay",
+  amex: "American Express",
+  "american express": "American Express",
+  "diners club": "Diners Club",
+  diners: "Diners Club",
+  maestro: "Maestro",
+  discover: "Discover",
+  jcb: "JCB",
+  unionpay: "UnionPay",
+};
+
+const WALLETS: Record<string, string> = {
+  paytm: "Paytm",
+  phonepe: "PhonePe",
+  amazonpay: "Amazon Pay",
+  mobikwik: "MobiKwik",
+  freecharge: "Freecharge",
+  airtelmoney: "Airtel Money",
+  jiomoney: "JioMoney",
+  olamoney: "Ola Money",
+};
+
+const METHODS: Record<string, string> = {
+  paylater: "Pay later",
+  cardless_emi: "Cardless EMI",
+  bank_transfer: "Bank transfer",
+  test: "Test payment",
+};
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * How an order was paid, for people: "Visa credit card •••• 4242 · HDFC Bank",
+ * "UPI · ra***@okhdfcbank", "Net banking · ICICI Bank", "Wallet · Paytm".
+ */
+export function paymentMethodLabel(d: PaymentMethodDetails): string {
+  if (d.method === "card" || d.method === "emi") {
+    const network = d.network ? (CARD_NETWORKS[d.network.toLowerCase()] ?? d.network) : null;
+    const card = [network, d.cardType, "card"].filter(Boolean).join(" ");
+    const label = `${d.method === "emi" ? "EMI on " : ""}${capitalize(card)}${d.last4 ? ` •••• ${d.last4}` : ""}`;
+    return d.issuer ? `${label} · ${bankName(d.issuer)}` : label;
+  }
+  if (d.method === "upi") return d.vpa ? `UPI · ${d.vpa}` : "UPI";
+  if (d.method === "netbanking") return d.bank ? `Net banking · ${bankName(d.bank)}` : "Net banking";
+  if (d.method === "wallet") return d.wallet ? `Wallet · ${WALLETS[d.wallet.toLowerCase()] ?? capitalize(d.wallet)}` : "Wallet";
+  return METHODS[d.method] ?? capitalize(d.method.replace(/_/g, " "));
 }
 
 export function discountPercent(price: number, compareAt: number | null): number | null {

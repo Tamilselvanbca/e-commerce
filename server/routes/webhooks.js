@@ -4,7 +4,14 @@ import express, { Router } from 'express';
 import { pool, query } from '../db/pool.js';
 import { logger } from '../lib/logger.js';
 import { markOrderPaid, markPaymentFailed } from '../services/orders.js';
-import { constructStripeEvent, findPayment, verifyRazorpayWebhook } from '../services/payments.js';
+import {
+  constructStripeEvent,
+  findPayment,
+  razorpayMethodDetails,
+  resolvePaymentMethod,
+  savePaymentMethod,
+  verifyRazorpayWebhook,
+} from '../services/payments.js';
 
 const router = Router();
 router.use(express.raw({ type: '*/*', limit: '1mb' }));
@@ -57,6 +64,8 @@ router.post('/razorpay', async (req, res) => {
         gatewayPaymentId: pay?.id,
         amount: pay?.amount ?? event.payload?.order?.entity?.amount_paid,
       });
+      // The payment entity already says how they paid (card, UPI, net banking…).
+      await savePaymentMethod('razorpay', rzOrderId, razorpayMethodDetails(pay));
     } else if (event.event === 'payment.failed') {
       await markPaymentFailed({
         gateway: 'razorpay',
@@ -100,6 +109,7 @@ router.post('/stripe', async (req, res) => {
             gatewayPaymentId: paymentIntentId,
             amount: session.amount_total,
           });
+          await resolvePaymentMethod({ gateway: 'stripe', gatewayOrderId: session.id, gatewayPaymentId: paymentIntentId });
         }
         break;
       case 'checkout.session.async_payment_failed':

@@ -25,6 +25,7 @@ import {
   redeemGiftCard,
   refundGiftCardForOrder,
 } from './gift-cards.js';
+import { resolvePaymentMethod } from './payments.js';
 import { queueOrderStatusSms } from './sms.js';
 
 export const ORDER_STATUSES = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
@@ -154,7 +155,7 @@ export async function getOrder({ orderNumber, id, userId, admin = false }, db = 
   );
   if (!o) return null;
 
-  const [rawItems, history, shipment] = await Promise.all([
+  const [rawItems, history, shipment, paidWith] = await Promise.all([
     query(
       `SELECT oi.id, oi.product_id, oi.product_name, oi.product_slug, oi.sku, oi.size, oi.color, oi.image_url,
               oi.unit_price, oi.quantity, oi.line_total, oi.gift_card_details,
@@ -170,7 +171,23 @@ export async function getOrder({ orderNumber, id, userId, admin = false }, db = 
       [o.id],
       db,
     ),
+    queryOne(
+      `SELECT gateway, gateway_order_id, gateway_payment_id, method_details FROM payments
+        WHERE order_id = $1 AND status = 'paid' ORDER BY updated_at DESC LIMIT 1`,
+      [o.id],
+      db,
+    ),
   ]);
+  // How they paid (card, UPI…). Orders paid before this was recorded ask the
+  // gateway once (outside transactions only).
+  let paymentMethod = paidWith?.methodDetails ?? null;
+  if (paidWith && !paymentMethod && db === pool) {
+    paymentMethod = await resolvePaymentMethod({
+      gateway: paidWith.gateway,
+      gatewayOrderId: paidWith.gatewayOrderId,
+      gatewayPaymentId: paidWith.gatewayPaymentId,
+    });
+  }
 
   // Gift card lines carry the recipient and, once paid, the card that was issued.
   const items = rawItems.map(({ giftCardDetails, issuedCardId, issuedCardCode, ...item }) => ({
@@ -217,6 +234,8 @@ export async function getOrder({ orderNumber, id, userId, admin = false }, db = 
       : null,
     expiresAt: o.expiresAt,
     paidAt: o.paidAt,
+    /** { method: card|upi|netbanking|wallet|…, network, cardType, last4, issuer, bank, wallet, vpa } */
+    paymentMethod,
     cancelledAt: o.cancelledAt,
     canPay: o.status === 'pending' && unpaid && Boolean(o.expiresAt) && new Date(o.expiresAt) > new Date(),
     canCancel: o.status === 'pending' && unpaid,
