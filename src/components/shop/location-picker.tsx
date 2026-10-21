@@ -187,29 +187,36 @@ export function LocationPicker({
   const showMap = Boolean(apiKey) && !failed;
 
   const useCurrentLocation = () => {
+    const fallback = showMap ? "move the map to your address" : "type your address below";
     if (!navigator.geolocation) {
-      setMessage("This browser can't share your location.");
+      setMessage(`This browser can't share your location. Please ${fallback}.`);
       return;
     }
     setLocating(true);
     setMessage(null);
+    const found = (p: GeolocationPosition) => {
+      setLocating(false);
+      const pos = { lat: p.coords.latitude, lng: p.coords.longitude };
+      map.current?.setCenter(pos);
+      map.current?.setZoom(17);
+      void choose(pos);
+    };
+    const fail = (err: GeolocationPositionError) => {
+      setLocating(false);
+      setMessage(
+        err.code === err.PERMISSION_DENIED
+          ? `Location access is blocked. Click the icon at the left of the address bar, allow Location for this site and try again, or ${fallback}.`
+          : `Your device didn't give a location. On a computer, turn on location in the system settings (Windows: Settings → Privacy & security → Location), or ${fallback}.`,
+      );
+    };
+    // GPS first (phones); computers without GPS can time out on it, so then ask for a rough fix (Wi-Fi).
     navigator.geolocation.getCurrentPosition(
-      (p) => {
-        setLocating(false);
-        const pos = { lat: p.coords.latitude, lng: p.coords.longitude };
-        map.current?.setCenter(pos);
-        map.current?.setZoom(17);
-        void choose(pos);
-      },
+      found,
       (err) => {
-        setLocating(false);
-        setMessage(
-          err.code === err.PERMISSION_DENIED
-            ? "Location access is blocked. Allow it for this site in your browser, or move the map to your address."
-            : "Couldn't find your location. Move the map to your address instead.",
-        );
+        if (err.code === err.PERMISSION_DENIED) return fail(err);
+        navigator.geolocation.getCurrentPosition(found, fail, { enableHighAccuracy: false, timeout: 15_000, maximumAge: 300_000 });
       },
-      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 60_000 },
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
     );
   };
 
