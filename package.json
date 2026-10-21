@@ -2,8 +2,8 @@
   "name": "noruku-theeni-store",
   "version": "1.0.0",
   "private": true,
-  "description": "Sweets & snacks store (website + API) for GoDaddy Node.js Hosting. Built from afd6a38.",
-  "buildCommit": "afd6a38",
+  "description": "Sweets & snacks store (website + API) for GoDaddy Node.js Hosting. Built from 84d397f.",
+  "buildCommit": "84d397f",
   "type": "module",
   "main": "server.js",
   "engines": {
