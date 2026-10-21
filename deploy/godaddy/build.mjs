@@ -29,7 +29,19 @@ const npm = (args, cwd) =>
 
 // Website build tools that the platform's production install must include.
 const BUILD_TOOLS = ['@tailwindcss/postcss', 'tailwindcss', 'typescript', '@types/node', '@types/react', '@types/react-dom'];
-const WEBSITE_FILES = ['src', 'public', 'next.config.ts', 'tsconfig.json', 'postcss.config.mjs', 'next-env.d.ts'];
+const WEBSITE_FILES = ['src', 'public', 'next.config.ts', 'tsconfig.json', 'postcss.config.mjs'];
+
+// Next rewrites next-env.d.ts on every dev/production build (".next/dev/types" vs ".next/types"),
+// so the copy on the host is always locally modified. The bundle ships one fixed version that
+// never changes between deploys; otherwise the host's `git pull` refuses to overwrite it.
+const NEXT_ENV = `/// <reference types="next" />
+/// <reference types="next/image-types/global" />
+import "./.next/dev/types/routes.d.ts";
+import "./.next/dev/types/root-params.d.ts";
+
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
+`;
 
 const readJson = async (file) => JSON.parse(await readFile(file, 'utf8'));
 const sortKeys = (obj) => Object.fromEntries(Object.entries(obj).sort(([a], [b]) => a.localeCompare(b)));
@@ -42,6 +54,7 @@ async function buildBundle() {
   for (const name of WEBSITE_FILES) {
     await cp(path.join(repo, 'frontend', name), path.join(out, name), { recursive: true });
   }
+  await writeFile(path.join(out, 'next-env.d.ts'), NEXT_ENV);
   // server.js runs Next in-process, so the Docker-only standalone output is not needed
   // (and makes Next log a misleading "next start does not work" warning).
   const nextConfig = path.join(out, 'next.config.ts');
