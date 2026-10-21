@@ -6,7 +6,7 @@ import { useState } from "react";
 import { api, ApiError, errorMessage } from "@/lib/api";
 import { useToast } from "@/components/providers";
 import { Badge, Button, Field, Input, Modal, PageLoader, ProductImg, Textarea } from "@/components/ui";
-import { formatDate, formatPrice, GATEWAY_LABELS, ORDER_STATUS_LABELS, variantLabel } from "@/lib/format";
+import { formatDate, formatPrice, GATEWAY_LABELS, ORDER_STATUS_LABELS, paymentMethodLabel, variantLabel } from "@/lib/format";
 import type { AdminOrder, Order, OrderStatus } from "@/lib/types";
 import { ConfirmDialog, DangerTextButton } from "@/components/admin/confirm-dialog";
 import { InlineAlert, LoadError } from "@/components/admin/feedback";
@@ -89,6 +89,7 @@ export default function AdminOrderDetailPage() {
           <>
             Placed {formatDate(order.createdAt, true)}
             {order.paymentGateway ? ` · ${GATEWAY_LABELS[order.paymentGateway]}` : ""}
+            {order.paymentMethod ? ` (${paymentMethodLabel(order.paymentMethod)})` : ""}
             {order.paidAt ? ` · Paid ${formatDate(order.paidAt, true)}` : ""}
             {isFetching ? <span className="ml-2 text-zinc-400">Refreshing…</span> : null}
           </>
@@ -324,6 +325,12 @@ function PaymentsPanel({ order }: { order: AdminOrder }) {
                   <dt className="inline text-zinc-500">Created: </dt>
                   <dd className="inline text-zinc-700">{formatDate(p.createdAt, true)}</dd>
                 </div>
+                {p.methodDetails && (
+                  <div className="min-w-0">
+                    <dt className="inline text-zinc-500">Paid with: </dt>
+                    <dd className="inline text-zinc-700">{paymentMethodLabel(p.methodDetails)}</dd>
+                  </div>
+                )}
               </dl>
               {p.error && <p className="mt-2 rounded-md bg-red-50 px-2 py-1.5 text-xs text-red-700">{p.error}</p>}
             </li>

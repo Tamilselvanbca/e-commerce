@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { api, ApiError, errorMessage } from "@/lib/api";
-import { cn, formatDate, formatPrice, GATEWAY_LABELS } from "@/lib/format";
+import { cn, formatDate, formatPrice, GATEWAY_LABELS, paymentMethodLabel } from "@/lib/format";
 import type { OnlineGateway, Order, PaymentInit, Shipment, TrackingEvent } from "@/lib/types";
 import { useStoreConfig, useToast } from "@/components/providers";
 import { Button, ButtonLink, Card, EmptyState, Modal } from "@/components/ui";
@@ -288,11 +288,23 @@ function OrderView({
                   <PaymentStatusBadge status={order.paymentStatus} />
                 </dd>
               </div>
-              {order.paymentGateway && (
+              {order.paymentMethod ? (
                 <div className="flex justify-between gap-3">
-                  <dt className="text-zinc-500">Method</dt>
-                  <dd className="text-right text-zinc-900">{GATEWAY_LABELS[order.paymentGateway] ?? order.paymentGateway}</dd>
+                  <dt className="shrink-0 text-zinc-500">Paid with</dt>
+                  <dd className="text-right text-zinc-900">
+                    {paymentMethodLabel(order.paymentMethod)}
+                    {order.paymentGateway && (
+                      <span className="block text-xs text-zinc-500">via {GATEWAY_LABELS[order.paymentGateway] ?? order.paymentGateway}</span>
+                    )}
+                  </dd>
                 </div>
+              ) : (
+                order.paymentGateway && (
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-zinc-500">Method</dt>
+                    <dd className="text-right text-zinc-900">{GATEWAY_LABELS[order.paymentGateway] ?? order.paymentGateway}</dd>
+                  </div>
+                )
               )}
               {order.giftCard && order.giftCardAmount > 0 && (
                 <div className="flex justify-between gap-3">

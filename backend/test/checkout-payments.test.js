@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { after, afterEach, before, beforeEach, describe, test } from 'node:test';
 import Stripe from 'stripe';
 import { expireStaleOrders } from '../src/services/orders.js';
+import { razorpayMethodDetails } from '../src/services/payments.js';
 import { createAddress, login, newAgent, pool, query, queryOne, resetDb, stock } from './helpers.js';
 
 const hmac = (secret, data) => crypto.createHmac('sha256', secret).update(data).digest('hex');
@@ -197,7 +198,18 @@ describe('razorpay', () => {
     const { order, payment } = res.body;
     const event = JSON.stringify({
       event: 'payment.captured',
-      payload: { payment: { entity: { id: 'pay_hook_1', order_id: payment.razorpayOrderId, amount: order.total, status: 'captured' } } },
+      payload: {
+        payment: {
+          entity: {
+            id: 'pay_hook_1',
+            order_id: payment.razorpayOrderId,
+            amount: order.total,
+            status: 'captured',
+            method: 'card',
+            card: { network: 'Visa', type: 'credit', last4: '4242', issuer: 'HDFC' },
+          },
+        },
+      },
     });
 
     await agent.post('/api/webhooks/razorpay').set('Content-Type', 'application/json').set('X-Razorpay-Signature', 'bad').send(event).expect(400);
@@ -214,8 +226,25 @@ describe('razorpay', () => {
     }
     const o = await agent.get(`/api/orders/${order.orderNumber}`).expect(200);
     assert.equal(o.body.paymentStatus, 'paid');
+    // How they paid, from the webhook's payment entity.
+    assert.deepEqual(o.body.paymentMethod, { method: 'card', network: 'Visa', cardType: 'credit', last4: '4242', issuer: 'HDFC' });
     const events = await queryOne(`SELECT count(*) AS count FROM webhook_events WHERE event_id = 'evt_1'`);
     assert.equal(events.count, 1);
+  });
+
+  test('records how the customer paid: UPI, net banking, wallet, test payments', async () => {
+    assert.deepEqual(razorpayMethodDetails({ method: 'upi', vpa: 'rahulkumar@okhdfcbank' }), { method: 'upi', vpa: 'ra***@okhdfcbank' });
+    assert.deepEqual(razorpayMethodDetails({ method: 'netbanking', bank: 'ICIC' }), { method: 'netbanking', bank: 'ICIC' });
+    assert.deepEqual(razorpayMethodDetails({ method: 'wallet', wallet: 'paytm' }), { method: 'wallet', wallet: 'paytm' });
+    assert.equal(razorpayMethodDetails({}), null);
+
+    const res = await checkout('mock');
+    await agent
+      .post('/api/payments/mock/complete')
+      .send({ orderNumber: res.body.order.orderNumber, mockPaymentId: res.body.payment.mockPaymentId, outcome: 'success' })
+      .expect(200);
+    const o = await agent.get(`/api/orders/${res.body.order.orderNumber}`).expect(200);
+    assert.deepEqual(o.body.paymentMethod, { method: 'test' });
   });
 
   test('a payment arriving after expiry reinstates the order', async () => {

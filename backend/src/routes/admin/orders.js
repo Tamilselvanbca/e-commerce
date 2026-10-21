@@ -38,7 +38,7 @@ async function adminOrder(number) {
   const [customer, payments] = await Promise.all([
     queryOne('SELECT id, phone, name, email, role, created_at FROM users WHERE id = $1', [order.userId]),
     query(
-      `SELECT gateway, gateway_order_id, gateway_payment_id, amount, status, error, created_at
+      `SELECT gateway, gateway_order_id, gateway_payment_id, amount, status, error, method_details, created_at
          FROM payments WHERE order_id = $1 ORDER BY created_at`,
       [order.id],
     ),
