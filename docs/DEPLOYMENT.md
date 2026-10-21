@@ -214,14 +214,28 @@ cap with your provider.
 ## 8. Shipping (Shiprocket, optional)
 
 1. In Shiprocket: **Settings → API → Configure → Create an API user** (a separate email from your login).
-2. Set `SHIPPING_PROVIDER=shiprocket`, `SHIPROCKET_EMAIL`, `SHIPROCKET_PASSWORD`, and
-   `SHIPROCKET_PICKUP_LOCATION` exactly as the pickup location is named in Shiprocket.
-3. Default parcel dimensions (`SHIPROCKET_DEFAULT_*`) are used unless the admin enters them per order.
+   Complete KYC, add a pickup address and keep some wallet balance (couriers are paid from it).
+2. In **Admin → Settings → Shipping**: choose Shiprocket, enter the API user email and password, save, then
+   use **Choose from my Shiprocket pickup addresses** for the default pickup address
+   (`SHIPPING_PROVIDER`, `SHIPROCKET_EMAIL`, `SHIPROCKET_PASSWORD`, `SHIPROCKET_PICKUP_LOCATION`).
+3. Copy the webhook URL shown there (`https://<domain>/api/webhooks/courier`) into **Shiprocket → Settings →
+   API → Webhooks** (any token). The webhook only says which AWB changed; the status is read back from
+   Shiprocket, so it can't be spoofed. Without it, a background job checks parcels every 20 minutes.
+4. Default parcel dimensions (`SHIPROCKET_DEFAULT_*`) prefill the booking form.
 
-The admin's **Ship with Shiprocket** button creates the Shiprocket order and assigns an AWB with the
-recommended courier. Customers see live tracking events on their order page. Some Shiprocket accounts
-require extra fields (GSTIN, HSN codes); test one shipment in Shiprocket's sandbox/test mode first.
-With `SHIPPING_PROVIDER=manual`, admins enter courier and AWB by hand.
+The admin's **Ship with Shiprocket** creates the Shiprocket order, assigns the courier (Shiprocket's pick or
+one chosen from the rates), books the pickup and makes the label; a failed step is shown on the order and
+retried from there. Courier scans move the order to Shipped and Delivered and notify the customer, who also
+sees the tracking events on their order page. Some Shiprocket accounts require extra fields (GSTIN, HSN codes);
+test one shipment first. With `SHIPPING_PROVIDER=manual`, admins enter courier and AWB by hand.
+
+### Address map (Google Maps, optional)
+
+With `GOOGLE_MAPS_API_KEY` (Admin → Settings → Shipping → Address map), the address form shows a map with a pin
+and a search box, and fills in the area, city, state and PIN code from where the customer drops the pin. In
+Google Cloud: create a project with billing, enable **Maps JavaScript API** and **Geocoding API**, create an
+API key, and restrict it to **Websites** `https://<domain>/*` and to those two APIs. Without a key, customers
+can still share their location with **Use my current location**.
 
 ## 9. WhatsApp
 

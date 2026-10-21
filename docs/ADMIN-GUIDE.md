@@ -38,7 +38,7 @@ Awaiting payment ─► Confirmed ─► Processing ─► Shipped ─► Delive
 - **Awaiting payment**: the customer started checkout but hasn't paid. Stock is held for 30 minutes; if they
   don't pay, the order is cancelled automatically and the stock is released. You don't need to do anything.
 - **Confirmed**: payment received. You and the customer both get an email.
-- **Processing**: you're packing it (optional step).
+- **Processing**: you're packing it, or it's booked with Shiprocket and waiting for the courier.
 - **Shipped**: handed to the courier. The customer is emailed the courier name and tracking number.
 - **Delivered**: the customer is emailed.
 
@@ -46,13 +46,22 @@ Awaiting payment ─► Confirmed ─► Processing ─► Shipped ─► Delive
 
 Open the order from **Orders**, then in the **Fulfilment** panel either:
 
-- **Add shipment**: type the courier (e.g. Delhivery) and the AWB/tracking number, plus an optional tracking
-  link, then **Save and mark shipped**. Or
-- **Ship with Shiprocket** (if your store uses Shiprocket): enter the parcel weight and size, or leave them
-  blank for the defaults. Shiprocket creates the shipment and picks a courier. Then schedule the pickup in
-  your Shiprocket panel as usual.
+- **Ship with Shiprocket** (if your store uses Shiprocket): choose the pickup address, check the parcel
+  weight and size (the store defaults are filled in), and optionally **Compare couriers and rates** to pick
+  one; otherwise Shiprocket chooses. **Book shipment** then does everything: creates the order in
+  Shiprocket, assigns the courier and AWB, books the pickup and makes the label. The order moves to
+  **Processing**; print the label with **Download label (PDF)** and stick it on the parcel.
+  - The order moves to **Shipped** by itself when the courier collects the parcel, and to **Delivered**
+    when it arrives. The customer gets an email (and SMS, if on) at each step. Updates come from the
+    Shiprocket webhook (see Settings → Shipping) or a check every 20 minutes; **Refresh tracking** checks now.
+  - If a step fails (most often: not enough balance in the Shiprocket wallet), the panel says why. Fix it
+    (recharge the wallet), then **Assign courier** or **Retry pickup and label** carries on from there.
+  - Cancelling an order that hasn't been picked up also cancels it in Shiprocket.
+- **Add shipment manually**: type the courier (e.g. Delhivery) and the AWB/tracking number, plus an optional
+  tracking link, then **Save and mark shipped**. When it arrives, use **Mark as delivered**.
 
-When it arrives, use **Mark as delivered**.
+If the customer pinned their location on the map, the shipping address shows **Pinned location on Google
+Maps** to pass to the courier.
 
 ### International orders
 

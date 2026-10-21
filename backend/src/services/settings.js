@@ -176,6 +176,7 @@ export function describeSettings() {
     webhooks: {
       razorpay: `${config.frontendUrl}/api/webhooks/razorpay`,
       stripe: `${config.frontendUrl}/api/webhooks/stripe`,
+      courier: `${config.frontendUrl}/api/webhooks/courier`,
     },
     server: {
       environment: config.env,

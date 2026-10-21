@@ -10,7 +10,7 @@ import { requireAuth } from '../middleware/auth.js';
 const router = Router();
 router.use(requireAuth);
 
-const COLUMNS = 'id, full_name, phone, line1, line2, landmark, city, state, pincode, country, is_default';
+const COLUMNS = 'id, full_name, phone, line1, line2, landmark, city, state, pincode, country, latitude, longitude, is_default';
 
 const baseFields = {
   fullName: z.string().trim().min(2, 'Enter the full name').max(80),
@@ -27,17 +27,25 @@ const baseFields = {
   state: z.string().trim().min(2, 'Select the state').max(80),
   pincode: z.string().trim().max(12),
   country: z.string().trim().length(2).toUpperCase().default('IN'),
+  // The pin on the map (optional); null clears it.
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
   isDefault: z.boolean().optional(),
 };
 
-const pincodeCheck = (a, ctx) => {
+const addressChecks = (a, ctx) => {
   if ((a.country ?? 'IN') === 'IN' && a.pincode !== undefined && !/^[1-9]\d{5}$/.test(a.pincode)) {
     ctx.addIssue({ code: 'custom', path: ['pincode'], message: 'Enter a valid 6-digit PIN code' });
   }
+  if ((a.latitude == null) !== (a.longitude == null)) {
+    ctx.addIssue({ code: 'custom', path: ['latitude'], message: 'Send both latitude and longitude, or neither' });
+  }
 };
 
-const createSchema = z.object(baseFields).superRefine(pincodeCheck);
-const updateSchema = z.object(baseFields).partial().superRefine(pincodeCheck);
+const createSchema = z.object(baseFields).superRefine(addressChecks);
+const updateSchema = z.object(baseFields).partial().superRefine(addressChecks);
+
+const coordinate = (v) => (v == null ? null : Math.round(v * 1e6) / 1e6);
 
 export async function getAddress(userId, id, db = pool) {
   const address = await queryOne(`SELECT ${COLUMNS} FROM addresses WHERE id = $1 AND user_id = $2`, [id, userId], db);
@@ -62,9 +70,10 @@ router.post('/', async (req, res) => {
     if (makeDefault) await query('UPDATE addresses SET is_default = false WHERE user_id = $1 AND is_default', [req.user.id], db);
     const id = randomUUID();
     await query(
-      `INSERT INTO addresses (id, user_id, full_name, phone, line1, line2, landmark, city, state, pincode, country, is_default)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-      [id, req.user.id, a.fullName, a.phone, a.line1, a.line2, a.landmark, a.city, a.state, a.pincode, a.country, makeDefault],
+      `INSERT INTO addresses (id, user_id, full_name, phone, line1, line2, landmark, city, state, pincode, country, latitude, longitude, is_default)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [id, req.user.id, a.fullName, a.phone, a.line1, a.line2, a.landmark, a.city, a.state, a.pincode, a.country,
+        coordinate(a.latitude), coordinate(a.longitude), makeDefault],
       db,
     );
     return getAddress(req.user.id, id, db);
@@ -81,10 +90,11 @@ router.patch('/:id', async (req, res) => {
     const merged = { ...current, ...Object.fromEntries(Object.entries(a).filter(([, v]) => v !== undefined)) };
     await query(
       `UPDATE addresses SET full_name = $3, phone = $4, line1 = $5, line2 = $6, landmark = $7, city = $8,
-              state = $9, pincode = $10, country = $11, is_default = $12
+              state = $9, pincode = $10, country = $11, latitude = $12, longitude = $13, is_default = $14
         WHERE id = $1 AND user_id = $2`,
       [id, req.user.id, merged.fullName, merged.phone, merged.line1, merged.line2, merged.landmark, merged.city,
-        merged.state, merged.pincode, merged.country, a.isDefault ? true : current.isDefault],
+        merged.state, merged.pincode, merged.country, coordinate(merged.latitude), coordinate(merged.longitude),
+        a.isDefault ? true : current.isDefault],
       db,
     );
     return getAddress(req.user.id, id, db);

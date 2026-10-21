@@ -124,7 +124,12 @@ type OrderItem = {
 type Shipment = {
   provider: 'manual' | 'shiprocket'; courier: string | null; awb: string | null;
   trackingUrl: string | null; shippedAt: string | null; deliveredAt: string | null;
+  trackingStatus: string | null;    // courier's latest status, e.g. "IN TRANSIT"
+  expectedDelivery: string | null;
+  // admin only: providerOrderId, providerShipmentId, pickupLocation, labelUrl,
+  // pickupScheduled, trackingUpdatedAt, lastError (why the last Shiprocket step failed)
 };
+// Customers see the shipment once it has an AWB or has shipped.
 
 type Order = OrderSummary & {
   currency: string; subtotal: number; shippingFee: number;
@@ -282,7 +287,8 @@ All cart endpoints return the full `Cart`.
 
 Validation: `fullName` 2–80, `phone` 10-digit Indian mobile or E.164, `line1` 3–200,
 `city`, `state` required, `pincode` 6 digits for `country = IN` (any postal / ZIP code elsewhere),
-`country` ISO 3166-1 alpha-2 (default `IN`).
+`country` ISO 3166-1 alpha-2 (default `IN`). Optional map pin: `latitude` and `longitude` together
+(numbers, 6 decimals kept; `null` clears); copied into the order's `shippingAddress`.
 
 ---
 
@@ -479,9 +485,23 @@ Customers get an email for `shipped`, `delivered` and `cancelled`.
 
 `POST /admin/orders/:orderNumber/shipment` body `{ "courier", "awb", "trackingUrl"? }` → `Order` (manual shipment; status becomes `shipped`).
 
-`POST /admin/orders/:orderNumber/shiprocket` body `{ "weight"?, "length"?, "breadth"?, "height"? }` → `Order`
-(creates the Shiprocket order and assigns an AWB; requires `SHIPPING_PROVIDER=shiprocket`; Indian addresses
-only, so international orders use the manual shipment endpoint).
+`GET /admin/shipping/shiprocket/pickups` → `{ items: { name, address, pincode, phone }[], configured, defaults: { weight, length, breadth, height } }`.
+
+`GET /admin/orders/:orderNumber/shiprocket/couriers?pickup=&weight=` → `{ recommendedId, couriers: { id, name, rate, etd, days, rating, surface }[], pickup }`
+(rate in paise, cheapest first).
+
+`POST /admin/orders/:orderNumber/shiprocket` body `{ "pickupLocation"?, "courierId"?, "weight"?, "length"?, "breadth"?, "height"? }` → `Order`.
+Does whichever steps are missing: create the Shiprocket order (order → `processing`), assign the courier/AWB,
+request the pickup, make the label. The first step's failure is an error; later failures are saved in
+`shipment.lastError` and calling it again retries from there. Requires `SHIPPING_PROVIDER=shiprocket`; Indian
+addresses only, so international orders use the manual shipment endpoint.
+
+`POST /admin/orders/:orderNumber/shiprocket/track` → `Order` (reads the courier status now).
+
+Courier status → order: picked up / in transit → `shipped`; delivered → `delivered` (with the usual emails/SMS).
+Sources: `POST /api/webhooks/courier` (Shiprocket webhook; the AWB's status is re-read from Shiprocket), a job
+every 10 minutes (each parcel at most every 20), and `GET /orders/:orderNumber/tracking`, which returns
+`{ shipment, orderStatus, events }`.
 
 ### Reviews
 `GET /admin/reviews?status=&rating=&q=&page=` → `Paginated<Review & { status }> & { summary }` (includes hidden reviews).

@@ -4,7 +4,9 @@ import { useId, useState } from "react";
 import { api, errorMessage } from "@/lib/api";
 import { COUNTRIES, countryName, dialCode, DOMESTIC_COUNTRY, toE164 } from "@/lib/countries";
 import type { Address, AddressInput } from "@/lib/types";
+import { useStoreConfig } from "@/components/providers";
 import { Button, Checkbox, Field, Input, Select } from "@/components/ui";
+import { LocationPicker, type LatLng, type PlaceParts } from "./location-picker";
 import { fieldErrorsFrom, normalizeIndianPhone, PINCODE_RE } from "./utils";
 
 const POSTCODE_RE = /^[A-Za-z0-9][A-Za-z0-9 -]{1,10}$/;
@@ -58,10 +60,18 @@ type FormState = {
   state: string;
   pincode: string;
   country: string;
+  /** The map pin, when the customer set one. */
+  location: LatLng | null;
   isDefault: boolean;
 };
 
 type Errors = Partial<Record<keyof FormState, string>>;
+
+/** Google's state name → ours ("Tamil Nadu", "Jammu & Kashmir" → "Jammu and Kashmir"). */
+function matchState(name: string): string {
+  const key = (s: string) => s.toLowerCase().replace(/&/g, "and").replace(/[^a-z]/g, "");
+  return INDIAN_STATES.find((s) => key(s) === key(name)) ?? name;
+}
 
 /** Shows Indian numbers as 10 digits and others in full international form. */
 function displayPhone(phone: string | null | undefined): string {
@@ -80,6 +90,7 @@ function toForm(address?: Partial<Address> | null, defaults?: { fullName?: strin
     state: address?.state ?? "",
     pincode: address?.pincode ?? "",
     country: address?.country ?? "IN",
+    location: address?.latitude != null && address?.longitude != null ? { lat: address.latitude, lng: address.longitude } : null,
     isDefault: address?.isDefault ?? false,
   };
 }
@@ -112,6 +123,8 @@ function toInput(f: FormState): AddressInput {
     state: f.state.trim(),
     pincode: f.pincode.trim().toUpperCase(),
     country: f.country || DOMESTIC_COUNTRY,
+    latitude: f.location?.lat ?? null,
+    longitude: f.location?.lng ?? null,
     isDefault: f.isDefault,
   };
 }
@@ -136,6 +149,7 @@ export function AddressForm({
   showDefaultToggle?: boolean;
 }) {
   const uid = useId();
+  const config = useStoreConfig();
   const [form, setForm] = useState<FormState>(() => toForm(address, defaults));
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -160,6 +174,25 @@ export function AddressForm({
       pincode: (country === DOMESTIC_COUNTRY) === (f.country === DOMESTIC_COUNTRY) ? f.pincode : "",
     }));
     setErrors({});
+  };
+
+  /** Fills the area, city, state and PIN code from the spot pinned on the map. */
+  const applyPlace = (p: PlaceParts) => {
+    setForm((f) => {
+      const country = p.country && COUNTRIES.some((c) => c.code === p.country) ? p.country : f.country;
+      const domesticPlace = country === DOMESTIC_COUNTRY;
+      const pincode = p.pincode ? (domesticPlace ? p.pincode.replace(/\D/g, "").slice(0, 6) : p.pincode.slice(0, 12)) : "";
+      const sameKind = (country === DOMESTIC_COUNTRY) === (f.country === DOMESTIC_COUNTRY);
+      return {
+        ...f,
+        country,
+        line2: p.area || f.line2,
+        city: p.city || f.city,
+        state: p.state ? (domesticPlace ? matchState(p.state) : p.state) : sameKind ? f.state : "",
+        pincode: pincode || (sameKind ? f.pincode : ""),
+      };
+    });
+    setErrors((e) => ({ ...e, country: undefined, line2: undefined, city: undefined, state: undefined, pincode: undefined }));
   };
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -206,6 +239,13 @@ export function AddressForm({
           ))}
         </Select>
       </Field>
+      <LocationPicker
+        apiKey={config.mapsApiKey}
+        value={form.location}
+        country={form.country}
+        onChange={(location) => set("location", location)}
+        onPlace={applyPlace}
+      />
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Full name" htmlFor={id("fullName")} error={errors.fullName}>
           <Input

@@ -1,5 +1,5 @@
-// Payment gateway webhooks. Mounted before the JSON body parser because
-// signature verification needs the exact raw request body.
+// Payment gateway and courier webhooks. Mounted before the JSON body parser
+// because signature verification needs the exact raw request body.
 import express, { Router } from 'express';
 import { pool, query } from '../db/pool.js';
 import { logger } from '../lib/logger.js';
@@ -12,6 +12,7 @@ import {
   savePaymentMethod,
   verifyRazorpayWebhook,
 } from '../services/payments.js';
+import { handleCourierUpdate } from '../services/shipments.js';
 
 const router = Router();
 router.use(express.raw({ type: '*/*', limit: '1mb' }));
@@ -123,6 +124,20 @@ router.post('/stripe', async (req, res) => {
     }
   });
   res.json({ received: true });
+});
+
+// --- Courier (Shiprocket → Settings → API → Webhooks) -------------------------
+// Shiprocket refuses URLs containing "shiprocket", hence /courier. The body only
+// names the AWB; its status is read back from Shiprocket (services/shipments.js).
+router.post('/courier', (req, res) => {
+  res.json({ received: true });
+  let payload = null;
+  try {
+    payload = JSON.parse(req.body instanceof Buffer ? req.body.toString('utf8') : '');
+  } catch {
+    return; // Shiprocket's "test" request may be empty
+  }
+  handleCourierUpdate(payload).catch((err) => logger.warn({ err }, 'Courier webhook update failed'));
 });
 
 export default router;

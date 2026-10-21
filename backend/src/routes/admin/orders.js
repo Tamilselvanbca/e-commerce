@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { config } from '../../config.js';
 import { query, queryOne } from '../../db/pool.js';
-import { badRequest } from '../../lib/errors.js';
 import { optionalText, parse } from '../../lib/validate.js';
 import { publicUser } from '../../middleware/auth.js';
 import {
@@ -12,7 +12,8 @@ import {
   recordShipment,
   requireOrder,
 } from '../../services/orders.js';
-import { createShipment } from '../../services/shiprocket.js';
+import { cancelShiprocketBooking, courierOptions, refreshTracking, shipWithShiprocket } from '../../services/shipments.js';
+import { listPickupLocations } from '../../services/shiprocket.js';
 
 const router = Router();
 const orderNumber = z.string().trim().max(40);
@@ -54,7 +55,8 @@ router.get('/orders/:orderNumber', async (req, res) => {
 router.patch('/orders/:orderNumber/status', async (req, res) => {
   const number = parse(orderNumber, req.params.orderNumber);
   const body = parse(z.object({ status: z.enum(ORDER_STATUSES), note: optionalText(500) }), req.body);
-  await adminUpdateStatus(number, body.status, body.note, req.user.id);
+  const order = await adminUpdateStatus(number, body.status, body.note, req.user.id);
+  if (body.status === 'cancelled') await cancelShiprocketBooking(order.id, req.user.id);
   res.json(await adminOrder(number));
 });
 
@@ -78,25 +80,47 @@ router.post('/orders/:orderNumber/shipment', async (req, res) => {
   res.json(await adminOrder(number));
 });
 
-const dimsSchema = z.object({
+// --- Shiprocket: book (pickup address, parcel, courier) → track ---------------
+router.get('/shipping/shiprocket/pickups', async (req, res) => {
+  res.json({
+    items: await listPickupLocations(),
+    configured: config.shipping.shiprocket.pickupLocation,
+    defaults: config.shipping.shiprocket.defaults,
+  });
+});
+
+router.get('/orders/:orderNumber/shiprocket/couriers', async (req, res) => {
+  const number = parse(orderNumber, req.params.orderNumber);
+  const q = parse(
+    z.object({
+      pickup: z.string().trim().max(120).optional(),
+      weight: z.coerce.number().positive().max(100).optional(),
+    }),
+    req.query,
+  );
+  res.json(await courierOptions(number, q));
+});
+
+const bookSchema = z.object({
+  pickupLocation: z.string().trim().max(120).optional(),
+  courierId: z.coerce.number().int().positive().optional(),
   weight: z.coerce.number().positive().max(100).optional(),
   length: z.coerce.number().positive().max(300).optional(),
   breadth: z.coerce.number().positive().max(300).optional(),
   height: z.coerce.number().positive().max(300).optional(),
 });
 
+/** Books the order with Shiprocket, or carries on from the step that failed. */
 router.post('/orders/:orderNumber/shiprocket', async (req, res) => {
   const number = parse(orderNumber, req.params.orderNumber);
-  const dims = parse(dimsSchema, req.body ?? {});
-  const order = await requireOrder({ orderNumber: number, admin: true });
-  if (!['confirmed', 'processing'].includes(order.status)) {
-    throw badRequest('Only confirmed or processing orders can be sent to Shiprocket');
-  }
-  if ((order.shippingAddress?.country ?? 'IN') !== 'IN') {
-    throw badRequest('Shiprocket ships within India only. For international orders, book the courier yourself and use "Add shipment".');
-  }
-  const shipment = await createShipment(order, dims);
-  await recordShipment(number, { provider: 'shiprocket', ...shipment }, req.user.id);
+  const { pickupLocation, courierId, ...dims } = parse(bookSchema, req.body ?? {});
+  await shipWithShiprocket(number, { pickupLocation, courierId, dims }, req.user.id);
+  res.json(await adminOrder(number));
+});
+
+router.post('/orders/:orderNumber/shiprocket/track', async (req, res) => {
+  const number = parse(orderNumber, req.params.orderNumber);
+  await refreshTracking(number);
   res.json(await adminOrder(number));
 });
 

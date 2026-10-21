@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, errorMessage } from "@/lib/api";
 import { cn } from "@/lib/format";
-import type { SettingField, VerifyTemplate } from "@/lib/types";
+import type { SettingField, ShiprocketPickup, VerifyTemplate } from "@/lib/types";
 import { useToast } from "@/components/providers";
 import { Badge, Button, Checkbox, Input, Select } from "@/components/ui";
 import { IconCopy } from "./icons";
@@ -161,6 +161,7 @@ export function SettingFieldRow({
       )}
 
       {field.lookup === "twilioVerifyTemplates" && !resetting && <VerifyTemplatePicker value={shown} onPick={setText} />}
+      {field.lookup === "shiprocketPickups" && !resetting && <ShiprocketPickupPicker value={shown} onPick={setText} />}
       {webhookUrl && <WebhookUrl url={webhookUrl} />}
 
       {error ? (
@@ -273,6 +274,68 @@ function WebhookUrl({ url }: { url: string }) {
         Copy
       </button>
     </div>
+  );
+}
+
+/** Lists the pickup addresses saved in Shiprocket (with the saved API user) to pick the default. */
+function ShiprocketPickupPicker({ value, onPick }: { value: string; onPick: (name: string) => void }) {
+  const [loading, setLoading] = useState(false);
+  const [items, setItems] = useState<ShiprocketPickup[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api<{ items: ShiprocketPickup[] }>("/admin/shipping/shiprocket/pickups");
+      setItems(res.items);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!items) {
+    return (
+      <div className="space-y-1">
+        <Button size="sm" variant="outline" onClick={load} loading={loading}>
+          Choose from my Shiprocket pickup addresses
+        </Button>
+        {error && <p className="text-xs text-red-600">{error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <fieldset className="space-y-2">
+      <legend className="text-xs text-zinc-500">
+        {items.length ? "Your Shiprocket pickup addresses:" : "No pickup addresses yet. Add one in Shiprocket → Settings → Pickup addresses."}
+      </legend>
+      <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+        {items.map((p) => (
+          <label
+            key={p.name}
+            className={cn(
+              "flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors",
+              value === p.name ? "border-brand-600 bg-brand-50" : "border-zinc-200 hover:bg-zinc-50",
+            )}
+          >
+            <input
+              type="radio"
+              name="shiprocket-pickup"
+              checked={value === p.name}
+              onChange={() => onPick(p.name)}
+              className="mt-0.5 size-4 shrink-0 accent-brand-700"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-zinc-900">{p.name}</span>
+              <span className="block text-xs leading-5 text-zinc-600">{[p.address, p.pincode].filter(Boolean).join(" · ")}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 

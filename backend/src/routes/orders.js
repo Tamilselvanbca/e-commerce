@@ -4,7 +4,7 @@ import { pageQuery, parse } from '../lib/validate.js';
 import { requireAuth } from '../middleware/auth.js';
 import { assertPayable, cancelUnpaidOrder, listOrders, requireOrder } from '../services/orders.js';
 import { initPayment } from '../services/payments.js';
-import { trackAwb } from '../services/shiprocket.js';
+import { orderTracking } from '../services/shipments.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -35,9 +35,10 @@ router.post('/:orderNumber/cancel', async (req, res) => {
 });
 
 router.get('/:orderNumber/tracking', async (req, res) => {
-  const order = await requireOrder({ orderNumber: parse(orderNumber, req.params.orderNumber), userId: req.user.id });
-  const events = order.shipment?.provider === 'shiprocket' ? await trackAwb(order.shipment.awb) : [];
-  res.json({ shipment: order.shipment, events });
+  const where = { orderNumber: parse(orderNumber, req.params.orderNumber), userId: req.user.id };
+  // Reading the courier's scans also moves the order on (picked up → shipped, delivered).
+  const { order, events } = await orderTracking(await requireOrder(where), () => requireOrder(where));
+  res.json({ shipment: order.shipment, orderStatus: order.status, events });
 });
 
 export default router;
